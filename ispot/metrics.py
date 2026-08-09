@@ -13,7 +13,11 @@ ispot.metrics.evaluate() by computing F1 directly.
 """
 import numpy as np
 import pandas as pd
-from sklearn.metrics import adjusted_rand_score, f1_score
+from sklearn.metrics import (
+    adjusted_rand_score,
+    f1_score,
+    normalized_mutual_info_score,
+)
 from scipy.optimize import linear_sum_assignment
 
 
@@ -55,7 +59,7 @@ def compute_metrics(ground_truth, predicted, runtime_sec=None):
 
     Returns
     -------
-    dict with keys: ari, macro_f1, weighted_f1, runtime, n_spots,
+    dict with keys: ari, nmi, macro_f1, weighted_f1, runtime, n_spots,
                     n_clusters_pred, n_clusters_true
     """
     gt = np.array(ground_truth)
@@ -72,6 +76,7 @@ def compute_metrics(ground_truth, predicted, runtime_sec=None):
     pred = np.array([str(x) for x in pred])
 
     ari = adjusted_rand_score(gt, pred)
+    nmi = normalized_mutual_info_score(gt, pred)
 
     pred_mapped = match_clusters_to_labels(gt, pred)
     macro_f1 = f1_score(gt, pred_mapped, average="macro", zero_division=0)
@@ -79,6 +84,7 @@ def compute_metrics(ground_truth, predicted, runtime_sec=None):
 
     return {
         "ari": float(ari),
+        "nmi": float(nmi),
         "macro_f1": float(macro_f1),
         "weighted_f1": float(weighted_f1),
         "runtime": float(runtime_sec) if runtime_sec is not None else None,

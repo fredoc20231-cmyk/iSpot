@@ -41,8 +41,9 @@ Then open `http://localhost:8100` in your browser.
 | GET | `/api/jobs/{id}` | Get job status |
 | GET | `/api/jobs/{id}/results` | Get job results |
 | GET | `/api/jobs/{id}/download/{filename}` | Download deliverable |
-| POST | `/api/plugins/register` | Register a plugin method |
-| GET | `/api/meta-learning/recommend` | Get method recommendation |
+| GET | `/api/meta-learning/stats` | Meta-learning database stats |
+
+_Planned (not yet implemented):_ `POST /api/plugins/register`, `GET /api/meta-learning/recommend`.
 
 ## Project Structure
 
@@ -50,7 +51,7 @@ Then open `http://localhost:8100` in your browser.
 iSpot/
 ├── ispot/
 │   ├── __init__.py
-│   ├── api.py                      # FastAPI backend (16 routes)
+│   ├── api.py                      # FastAPI backend (9 API routes + static)
 │   ├── deliverables.py             # Ranking CSV, figures, viewer JSON, PDF report
 │   ├── meta_learning.py            # Meta-learning engine (thread-safe SQLite)
 │   ├── multiplatform_loaders.py    # Loaders for 7 ST platforms

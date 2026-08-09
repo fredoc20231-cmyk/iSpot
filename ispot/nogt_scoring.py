@@ -378,6 +378,7 @@ def consensus_alignment_score(
     method_labels: np.ndarray,
     all_method_labels: dict[str, np.ndarray],
     n_clusters: int,
+    consensus_labels: np.ndarray | None = None,
 ) -> float:
     """Compute the Consensus Alignment Score (CAS) for a single method.
 
@@ -388,15 +389,22 @@ def consensus_alignment_score(
     all_method_labels : dict[str, np.ndarray]
         All methods' labels (including the one being scored).
     n_clusters : int
+    consensus_labels : np.ndarray, optional
+        Precomputed consensus labels. The consensus depends only on
+        ``all_method_labels`` and ``n_clusters`` (both identical across methods
+        in a benchmark run), so callers scoring many methods should compute it
+        once via :func:`consensus_clustering` and pass it here to avoid an
+        O(n) spectral clustering per method. When ``None``, it is computed.
 
     Returns
     -------
     float: CAS in [0, 1]. Higher = more aligned with consensus.
     """
-    consensus = consensus_clustering(all_method_labels, n_clusters)
+    if consensus_labels is None:
+        consensus_labels = consensus_clustering(all_method_labels, n_clusters)
     ari = adjusted_rand_score(
         np.array(method_labels).astype(str),
-        consensus.astype(str),
+        np.array(consensus_labels).astype(str),
     )
     return max(0.0, float(ari))
 
@@ -423,6 +431,7 @@ def compute_nogt_score(
     n_clusters: int,
     weights: dict[str, float] | None = None,
     k_spatial: int = 6,
+    consensus_labels: np.ndarray | None = None,
 ) -> dict:
     """Compute the composite No-GT score and all component scores.
 
@@ -443,6 +452,10 @@ def compute_nogt_score(
         Component weights. Defaults to DEFAULT_WEIGHTS.
     k_spatial : int
         Number of spatial neighbors for Moran's I.
+    consensus_labels : np.ndarray, optional
+        Precomputed consensus labels (see :func:`consensus_alignment_score`).
+        Pass this when scoring multiple methods to avoid recomputing the
+        identical consensus once per method.
 
     Returns
     -------
@@ -454,7 +467,9 @@ def compute_nogt_score(
     scs = spatial_coherence_score(labels, coords, k=k_spatial)
     css = cluster_stability_score(label_runs)
     ess = expression_separability_score(labels, X_pca)
-    cas = consensus_alignment_score(labels, all_method_labels, n_clusters)
+    cas = consensus_alignment_score(
+        labels, all_method_labels, n_clusters, consensus_labels=consensus_labels
+    )
 
     nogt = (
         weights["scs"] * scs

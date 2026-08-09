@@ -34,8 +34,11 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Ensure ispot is importable
-sys.path.insert(0, "/workspace")
+# Ensure the repo root (which contains the ``ispot`` package) is importable,
+# regardless of where the server is launched from.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from ispot.multiplatform_loaders import load_data, auto_detect_platform, LOADER_REGISTRY
 from ispot.profiling import profile_data, DataFeatureVector
@@ -46,7 +49,7 @@ from ispot.registry import (
     get_runner, is_stochastic, is_r_based,
 )
 from ispot.metrics import compute_metrics
-from ispot.nogt_scoring import compute_nogt_score, DEFAULT_WEIGHTS
+from ispot.nogt_scoring import compute_nogt_score, consensus_clustering, DEFAULT_WEIGHTS
 from ispot.meta_learning import (
     MetaLearningDB, MetaLearningModel, seed_from_existing_results,
     pilot_then_full, evaluate_pilot_alignment,
@@ -61,18 +64,23 @@ from ispot.plugins import discover_plugins, get_all_method_names
 # Configuration
 # ---------------------------------------------------------------------------
 
-WORKSPACE_DIR = Path("/workspace/ispot_jobs")
-WORKSPACE_DIR.mkdir(exist_ok=True)
+# Job storage directory. Defaults to <repo>/ispot_jobs; override with
+# ISPOT_JOBS_DIR (e.g. a mounted volume in production).
+WORKSPACE_DIR = Path(os.environ.get("ISPOT_JOBS_DIR", REPO_ROOT / "ispot_jobs"))
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Meta-learning database (persistent across restarts)
 DB_PATH = str(WORKSPACE_DIR / "meta_learning.db")
+
+# Seed data shipped with the repo; override with ISPOT_SEED_CSV.
+SEED_CSV = os.environ.get("ISPOT_SEED_CSV", str(REPO_ROOT / "data" / "unified_results.csv"))
 
 # Initialize meta-learning
 ml_db = MetaLearningDB(DB_PATH)
 # Seed from existing results if database is empty
 if ml_db.count_runs() == 0:
-    n = seed_from_existing_results(ml_db, "/mnt/results/unified_results.csv")
-    print(f"Seeded meta-learning DB with {n} records")
+    n = seed_from_existing_results(ml_db, SEED_CSV)
+    print(f"Seeded meta-learning DB with {n} records from {SEED_CSV}")
 
 ml_model = MetaLearningModel(min_samples_per_method=3, alpha=1.0)
 ml_model.train(ml_db)
@@ -539,6 +547,15 @@ def run_benchmark_task(
             coords = np.array(adata_for_est.obsm["spatial"])
             X_pca = adata_for_est.obsm["X_pca"]
 
+            # The consensus depends only on the full set of method labels and
+            # n_clusters, so compute it once here rather than re-running the
+            # spectral clustering inside compute_nogt_score for every method.
+            try:
+                consensus_labels = consensus_clustering(method_labels, n_clusters)
+            except Exception as e:
+                print(f"Consensus clustering failed, CAS will fall back per-method: {e}")
+                consensus_labels = None
+
             nogt_results = []
             for method in method_labels:
                 labels = method_labels[method]
@@ -552,6 +569,7 @@ def run_benchmark_task(
                     all_method_labels=method_labels,
                     n_clusters=n_clusters,
                     weights=weights,
+                    consensus_labels=consensus_labels,
                 )
 
                 # Update results with no-GT scores

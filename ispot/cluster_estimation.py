@@ -20,66 +20,31 @@ import anndata as ad
 import scanpy as sc
 from sklearn.metrics import silhouette_score
 
+from ispot.knee import find_knee
 from ispot.nogt_scoring import spatial_coherence_score
 
 
 def _find_knee(ks: np.ndarray, scores: np.ndarray) -> int:
-    """Find the knee (elbow) point in a monotonically decreasing curve.
+    """Find the knee (elbow) of the spatial-coherence-vs-K curve.
 
-    For spatial coherence vs. K, the curve decreases sharply at first
-    (going from 2 to a few clusters breaks up large regions) then
-    plateaus (adding more clusters beyond the true K doesn't reduce
-    coherence much). The knee is where the decline transitions from
-    steep to gentle.
-
-    Method: compute the discrete derivative (differences between
-    consecutive K values). The knee is the last K where the derivative
-    is steeper than the average derivative — i.e., the point where
-    further increases in K yield diminishing losses in coherence.
+    Thin wrapper over :func:`ispot.knee.find_knee`, which uses the maximum
+    perpendicular distance from the endpoint chord. This is direction-agnostic:
+    the spatial-coherence-vs-K curve is not reliably monotonic, so the previous
+    cumulative-drop heuristic (which assumed a strictly decreasing curve)
+    collapsed the estimate to the smallest candidate K on non-monotonic curves.
 
     Parameters
     ----------
     ks : np.ndarray
         Cluster counts (x-axis), sorted ascending.
     scores : np.ndarray
-        Scores (y-axis), expected to be decreasing with K.
+        Spatial coherence (y-axis) at each K.
 
     Returns
     -------
     int: optimal K at the knee point.
     """
-    if len(ks) < 3:
-        return int(ks[len(ks) // 2])  # middle value as fallback
-
-    # Compute differences (negative for decreasing curve)
-    diffs = np.diff(scores)  # score[k+1] - score[k], should be negative
-
-    # The knee is where the magnitude of the drop transitions from
-    # large to small. Find the point where the cumulative drop
-    # accounts for most of the total drop.
-    total_drop = abs(scores[-1] - scores[0])
-    if total_drop < 1e-6:
-        return int(ks[len(ks) // 2])
-
-    # Cumulative drop as fraction of total
-    cum_drop = np.cumsum(np.abs(diffs))
-    cum_frac = cum_drop / total_drop
-
-    # The knee is the last K where we haven't yet captured 70% of the
-    # total drop — i.e., the point where most of the coherence loss
-    # has happened and further K increases are in the plateau region.
-    # We use 70% as the threshold (captures the "elbow" region).
-    threshold = 0.70
-    knee_idx = 0
-    for i, frac in enumerate(cum_frac):
-        if frac < threshold:
-            knee_idx = i
-        else:
-            break
-
-    # knee_idx is the index in the diffs array; the corresponding K is ks[knee_idx + 1]
-    # (the K at which we've just passed the threshold)
-    return int(ks[knee_idx + 1])
+    return find_knee(ks, scores)
 
 
 def estimate_n_clusters(
