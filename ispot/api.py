@@ -60,6 +60,7 @@ from ispot.deliverables import (
 )
 from ispot.plugins import discover_plugins, get_all_method_names
 from ispot.job_status import classify_job_status
+from ispot.stats_compare import build_comparison_table
 from ispot import validation
 
 # ---------------------------------------------------------------------------
@@ -649,6 +650,25 @@ def run_benchmark_task(
         # Save raw results
         results_df.to_csv(results_dir / "raw_results.csv", index=False)
 
+        # Pairwise statistical comparison (PLAN 1.5.3). Meaningful only with
+        # ground truth and repeated seeds, where per-seed ARI gives paired
+        # samples; skipped otherwise.
+        statistical_results = None
+        if has_gt:
+            score_map: dict[str, dict[int, float]] = {}
+            for _, row in results_df.iterrows():
+                if row.get("error") is not None:
+                    continue
+                ari = row.get("ari")
+                if ari is None or pd.isna(ari):
+                    continue
+                score_map.setdefault(row["method"], {})[int(row.get("seed", 42))] = float(ari)
+            try:
+                statistical_results = build_comparison_table(score_map, metric_name="ari")
+            except Exception as e:
+                print(f"Statistical comparison skipped: {e}")
+                statistical_results = None
+
         # Ranking table
         ranking_path = generate_ranking_table(
             results_df, has_ground_truth=has_gt,
@@ -676,6 +696,7 @@ def run_benchmark_task(
             data_profile=features.to_dict(),
             n_clusters=n_clusters,
             output_path=str(results_dir / "benchmark_report.pdf"),
+            statistical_results=statistical_results,
         )
 
         # --- Step 10: Complete ---

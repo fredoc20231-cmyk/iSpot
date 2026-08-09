@@ -120,4 +120,5 @@ iSpot/
 - A job reports `completed_partial` when some methods fail but others succeed; `failed` only when every method fails. Per-method errors are in the job's `method_summary`.
 - Uploads must be `.h5ad`, `.h5`, or `.csv` and stay within the size/spot-count limits above
 - No-GT scores are proxy metrics, not ground truth — this is stated in every report
+- The PDF report includes a pairwise statistical comparison (Wilcoxon signed-rank + Cliff's delta, Holm–Bonferroni corrected) when ground truth and multiple seeds are available
 - Cluster count estimation uses knee detection; typically within ±2 of true count
