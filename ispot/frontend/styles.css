@@ -1,0 +1,572 @@
+/* =========================================================================
+   iSpot — Spatial Transcriptomics Clustering Benchmark
+   Design: hex-spot grid as signature motif (the real geometry of ST data),
+   Space Grotesk for display, Inter for body, IBM Plex Mono for data values.
+   ========================================================================= */
+
+:root {
+  /* Brand palette — kept from the original identity, put to real use */
+  --black: #0B0F0D;
+  --bg: #F6F4EC;
+  --surface: #FFFFFF;
+  --ink: #14171A;
+  --yellow: #E9ED4C;
+  --orange: #FF9400;
+  --green: #75A025;
+  --pink: #FD9BED;
+  --blue: #0279EE;
+  --gray: #6b7280;
+  --border: #E3E0D3;
+  --shadow: 0 1px 2px rgba(11,15,13,0.06), 0 1px 1px rgba(11,15,13,0.04);
+  --radius: 10px;
+
+  /* Type */
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+}
+
+/* Retained aliases so any legacy references keep working */
+:root {
+  --phylo-black: var(--black);
+  --phylo-light: #ECE9E2;
+  --phylo-bg: var(--bg);
+  --phylo-yellow: var(--yellow);
+  --phylo-orange: var(--orange);
+  --phylo-green: var(--green);
+  --phylo-pink: var(--pink);
+  --phylo-blue: var(--blue);
+  --phylo-gray: var(--gray);
+  --phylo-border: var(--border);
+  --phylo-shadow: var(--shadow);
+  --phylo-radius: var(--radius);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-font-smoothing: antialiased; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+/* -------------------------------------------------------------------------
+   Hex-grid signature motif — used sparingly: header background + card corner
+   ------------------------------------------------------------------------- */
+
+.header {
+  background: var(--black);
+  background-image:
+    radial-gradient(circle at 18% -10%, rgba(233,237,76,0.08), transparent 45%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100' fill='none' stroke='rgba(255,255,255,0.07)' stroke-width='1'/%3E%3Cpath d='M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34' fill='none' stroke='rgba(255,255,255,0.07)' stroke-width='1'/%3E%3C/svg%3E");
+  color: white;
+  padding: 22px 32px 20px;
+}
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { color: var(--yellow); display: flex; }
+.header h1 {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.header h1 span { color: rgba(255,255,255,0.5); font-weight: 500; }
+.header .status {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: rgba(255,255,255,0.82);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header .status .status-sep { color: rgba(255,255,255,0.25); }
+.header .status .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(117,160,37,0.25);
+}
+.header-sub {
+  margin-top: 10px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.55);
+  max-width: 560px;
+}
+
+/* Workflow strip — a real sequence, so numbering earns its place */
+.workflow {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.workflow-step {
+  font-size: 12.5px;
+  color: var(--gray);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workflow-step .n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--black);
+  background: var(--yellow);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+/* Layout */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 32px 60px;
+}
+
+/* Cards — corner hex accent ties back to header motif, kept quiet */
+.card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 26px 28px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  top: -18px; right: -18px;
+  width: 44px; height: 44px;
+  background: none;
+  border: 1.5px solid var(--border);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  opacity: 0.6;
+}
+.card h2 {
+  font-family: var(--font-display);
+  font-size: 16.5px;
+  font-weight: 600;
+  margin-bottom: 18px;
+  color: var(--black);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.step-index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--black);
+  color: var(--yellow);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.muted { color: var(--gray); font-size: 13px; }
+.optional { color: var(--gray); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.mono { font-family: var(--font-mono); }
+
+/* Upload zone */
+.upload-zone {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 38px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.upload-zone:hover, .upload-zone.dragover {
+  border-color: var(--blue);
+  background: rgba(2, 121, 238, 0.04);
+}
+.upload-zone .hex-icon { color: var(--gray); display: flex; justify-content: center; margin-bottom: 6px; }
+.upload-zone:hover .hex-icon { color: var(--blue); }
+.upload-zone p {
+  color: var(--ink);
+  font-size: 14px;
+  margin-top: 6px;
+}
+.upload-zone p.muted { margin-top: 4px; }
+.upload-zone input[type="file"] { display: none; }
+.upload-info {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--gray);
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+/* Form elements */
+.form-group { margin-bottom: 16px; }
+.form-group label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+.form-group select, .form-group input[type="text"], .form-group input[type="number"] {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: var(--font-body);
+  background: var(--surface);
+}
+.form-group select:focus, .form-group input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(2,121,238,0.12);
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  margin-bottom: 18px;
+  cursor: pointer;
+}
+.checkbox-row input { margin: 0; }
+
+/* Method checkboxes */
+.method-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.method-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.method-chip:hover { border-color: var(--blue); }
+.method-chip.selected {
+  border-color: var(--blue);
+  background: rgba(2, 121, 238, 0.06);
+}
+.method-chip input { margin: 0; accent-color: var(--blue); }
+.method-chip span:not(.badge) { flex: 1; }
+.method-chip .badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.method-chip .badge.baseline { background: #ECE9E2; color: var(--gray); }
+.method-chip .badge.new { background: var(--yellow); color: var(--black); }
+.method-chip .badge.r { background: var(--pink); color: var(--black); }
+
+/* Buttons */
+.btn {
+  padding: 11px 26px;
+  border: none;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-primary {
+  background: var(--black);
+  color: white;
+}
+.btn-primary:hover { background: #232823; }
+.btn-primary:disabled {
+  background: #cfcdc4;
+  color: #8a8a83;
+  cursor: not-allowed;
+}
+.btn-secondary {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: var(--bg); border-color: var(--blue); color: var(--blue); }
+
+/* Progress bar — gradient echoes the cluster-color diversity of the data */
+.progress-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--green), var(--yellow), var(--orange));
+  transition: width 0.3s ease;
+}
+.progress-text {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--gray);
+  margin-top: 8px;
+}
+
+/* Ranking table — hex rank badges instead of a plain number */
+.ranking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.ranking-table th {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gray);
+}
+.ranking-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.ranking-table tr:hover { background: var(--bg); }
+.ranking-table .rank-cell {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  color: var(--black);
+}
+.ranking-table .recommendation {
+  font-family: var(--font-body);
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  background: var(--yellow);
+  color: var(--black);
+  font-weight: 600;
+}
+
+/* Figures */
+.figures-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 16px;
+}
+.figure-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.figure-card img {
+  width: 100%;
+  display: block;
+}
+.figure-card .caption {
+  padding: 9px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--gray);
+  background: var(--bg);
+}
+
+/* Viewer — dark microscopy panel */
+.viewer-container {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #14171A;
+}
+.viewer-canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+.viewer-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.viewer-controls select {
+  padding: 7px 11px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 5px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  background: rgba(11,15,13,0.75);
+  color: white;
+  backdrop-filter: blur(4px);
+}
+.viewer-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(11,15,13,0.92);
+  color: white;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-width: 250px;
+  display: none;
+  z-index: 10;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1.5px solid var(--border);
+  margin-bottom: 20px;
+}
+.tab {
+  padding: 10px 4px;
+  margin-right: 26px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1.5px;
+  color: var(--gray);
+  transition: all 0.15s ease;
+}
+.tab:hover { color: var(--black); }
+.tab.active {
+  color: var(--black);
+  border-bottom-color: var(--yellow);
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Data profile */
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.profile-item {
+  padding: 13px 14px;
+  background: var(--bg);
+  border-radius: 7px;
+  border-left: 3px solid var(--border);
+}
+.profile-item .label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--gray);
+}
+.profile-item .value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  margin-top: 4px;
+  color: var(--black);
+}
+
+/* Meta-learning info */
+.ml-info {
+  padding: 13px 16px;
+  background: rgba(2, 121, 238, 0.05);
+  border: 1px solid rgba(2, 121, 238, 0.18);
+  border-left: 3px solid var(--blue);
+  border-radius: 7px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.ml-info strong { color: var(--blue); font-family: var(--font-display); }
+
+/* Alert */
+.alert {
+  padding: 12px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  margin-bottom: 16px;
+  border-left: 3px solid transparent;
+}
+.alert-error {
+  background: rgba(255, 148, 0, 0.08);
+  border-left-color: var(--orange);
+  color: #8a5200;
+}
+.alert-success {
+  background: rgba(117, 160, 37, 0.08);
+  border-left-color: var(--green);
+  color: #4a6b1a;
+}
+.alert-info {
+  background: rgba(2, 121, 238, 0.06);
+  border-left-color: var(--blue);
+  color: #0260c0;
+}
+
+/* Loading spinner */
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Hidden */
+.hidden { display: none !important; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .method-chip, .upload-zone, .progress-fill, .tab { transition: none; }
+  .spinner { animation: none; }
+}
+
+/* Small screens */
+@media (max-width: 640px) {
+  .container { padding: 18px 16px 40px; }
+  .form-row { grid-template-columns: 1fr; }
+  .workflow { flex-direction: column; gap: 8px; }
+  .header { padding: 18px 18px 16px; }
+}

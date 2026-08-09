@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# iSpot runtime
+ispot_jobs/
+*.sqlite
+*.db
+
+# OS / editor
+.DS_Store
+__MACOSX/

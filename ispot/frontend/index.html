@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iSpot | Spatial Transcriptomics Clustering Benchmark</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="30" height="30">
+          <polygon points="20,2 36,11 36,29 20,38 4,29 4,11" fill="none" stroke="currentColor" stroke-width="2"/>
+          <circle cx="20" cy="20" r="3.5" fill="var(--yellow)"/>
+          <circle cx="14" cy="16" r="2" fill="var(--pink)"/>
+          <circle cx="27" cy="15" r="2" fill="var(--blue)"/>
+          <circle cx="14" cy="25" r="2" fill="var(--orange)"/>
+          <circle cx="27" cy="25" r="2" fill="var(--green)"/>
+        </svg>
+      </span>
+      <h1>iSpot<span>·bench</span></h1>
+    </div>
+    <div class="status">
+      <span class="dot"></span>
+      <span><span id="health-methods">-</span> methods</span>
+      <span class="status-sep">/</span>
+      <span><span id="health-runs">-</span> runs learned</span>
+      <span class="status-sep">/</span>
+      <span><span id="health-platforms">-</span> platforms</span>
+    </div>
+  </div>
+  <p class="header-sub">Benchmark spatial transcriptomics clustering methods and get a ranked, reproducible recommendation.</p>
+</div>
+
+<div class="container">
+
+  <!-- Alert container -->
+  <div id="alert-container"></div>
+
+  <!-- Workflow strip -->
+  <div class="workflow">
+    <div class="workflow-step" data-step="1"><span class="n">01</span> Upload data</div>
+    <div class="workflow-step" data-step="2"><span class="n">02</span> Configure &amp; run</div>
+    <div class="workflow-step" data-step="3"><span class="n">03</span> Compare results</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="upload">Upload &amp; Configure</div>
+    <div class="tab" data-tab="results">Results</div>
+  </div>
+
+  <!-- Tab: Upload & Configure -->
+  <div id="tab-upload" class="tab-content active">
+
+    <!-- Upload -->
+    <div class="card">
+      <h2><span class="step-index">1</span>Upload spatial transcriptomics data</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Platform</label>
+          <select id="select-platform"></select>
+        </div>
+        <div class="form-group">
+          <label>Sample ID <span class="optional">optional</span></label>
+          <input type="text" id="input-sample-id" placeholder="e.g. 151507">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Ground truth column <span class="optional">optional</span></label>
+        <input type="text" id="input-gt-col" placeholder="e.g. layer_guess, annotation">
+      </div>
+      <div id="upload-zone" class="upload-zone">
+        <div class="hex-icon" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="34" height="34">
+            <polygon points="20,2 36,11 36,29 20,38 4,29 4,11" fill="none" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </div>
+        <p><b>Click to browse</b> or drag &amp; drop</p>
+        <p class="muted">Supported formats: .h5ad, .h5, .csv</p>
+        <input type="file" id="file-input" accept=".h5ad,.h5,.csv">
+      </div>
+      <div id="upload-info" class="hidden upload-info">
+        File: <span id="upload-filename" class="mono"></span> (<span id="upload-filesize" class="mono"></span>)
+        &nbsp;·&nbsp; Platform: <span id="upload-platform" class="mono"></span>
+      </div>
+    </div>
+
+    <!-- Method selection -->
+    <div class="card">
+      <h2><span class="step-index">2</span>Select clustering methods</h2>
+      <div id="method-grid" class="method-grid"></div>
+    </div>
+
+    <!-- Configuration -->
+    <div class="card">
+      <h2><span class="step-index">3</span>Configure benchmark</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Number of clusters <span class="optional">auto-estimated if blank</span></label>
+          <input type="number" id="input-n-clusters" placeholder="Auto-estimate">
+        </div>
+        <div class="form-group">
+          <label>Seeds <span class="optional">comma-separated</span></label>
+          <input type="text" id="input-seeds" value="42" placeholder="42, 43, 44">
+        </div>
+      </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="checkbox-meta-learning" checked>
+        Use meta-learning to recommend methods
+      </label>
+      <button id="btn-start" class="btn btn-primary" disabled>Start benchmark</button>
+    </div>
+
+  </div>
+
+  <!-- Tab: Results -->
+  <div id="tab-results" class="tab-content">
+
+    <!-- Progress -->
+    <div id="progress-container" class="card hidden">
+      <h2>Benchmark progress</h2>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+      </div>
+      <div id="progress-text" class="progress-text">Queued&hellip;</div>
+    </div>
+
+    <!-- Meta-learning info -->
+    <div id="ml-info" class="ml-info hidden"></div>
+
+    <!-- Data profile -->
+    <div id="profile-section" class="card hidden">
+      <h2>Data profile</h2>
+      <div id="profile-grid" class="profile-grid"></div>
+    </div>
+
+    <!-- Cluster estimation -->
+    <div id="est-section" class="card hidden">
+      <h2>Cluster count estimation</h2>
+      <div class="profile-grid">
+        <div class="profile-item">
+          <div class="label">Estimated K</div>
+          <div class="value" id="est-k">-</div>
+        </div>
+        <div class="profile-item">
+          <div class="label">Spatial coherence</div>
+          <div class="value" id="est-scs">-</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results summary -->
+    <div id="results-section" class="card hidden">
+      <h2>Benchmark results</h2>
+      <div class="profile-grid" style="margin-bottom:16px;">
+        <div class="profile-item">
+          <div class="label">Job ID</div>
+          <div class="value mono" id="results-job-id" style="font-size:14px;">-</div>
+        </div>
+        <div class="profile-item">
+          <div class="label">Ground truth</div>
+          <div class="value" id="results-has-gt">-</div>
+        </div>
+        <div class="profile-item">
+          <div class="label">N clusters</div>
+          <div class="value" id="results-n-clusters">-</div>
+        </div>
+      </div>
+      <div id="download-links"></div>
+    </div>
+
+    <!-- Ranking table -->
+    <div class="card">
+      <h2>Ranking table</h2>
+      <div id="ranking-table-container"></div>
+    </div>
+
+    <!-- Figures -->
+    <div class="card">
+      <h2>Publication figures</h2>
+      <div id="figures-grid" class="figures-grid"></div>
+    </div>
+
+    <!-- Interactive Viewer -->
+    <div id="viewer-section" class="card">
+      <h2>Interactive spatial viewer</h2>
+      <p class="muted" style="margin-bottom:12px;">
+        Hover over spots to see cluster labels and gene expression. Switch methods to compare.
+      </p>
+      <div id="viewer-container" class="viewer-container"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
