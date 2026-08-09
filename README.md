@@ -125,7 +125,7 @@ iSpot/
 - Uploads must be `.h5ad`, `.h5`, or `.csv` and stay within the size/spot-count limits above
 - Downloads are constrained to a job's own `results/` directory (path-traversal attempts are rejected)
 - Uploaded-but-never-completed jobs are cleaned up after `ISPOT_JOB_TTL_DAYS` (on startup)
-- **Plugin security:** community plugins execute as in-process Python and are trusted. Only enable plugins you trust on a single-tenant instance; do not expose plugin registration in a multi-tenant deployment without process/container sandboxing.
+- **Plugin security:** `plugins.run_plugin_sandboxed()` runs a plugin in an isolated subprocess with memory/CPU rlimits and a wall-clock timeout (`ISPOT_PLUGIN_TIMEOUT`, `ISPOT_PLUGIN_MEM_MB`), so a misbehaving plugin can't crash or read the API process. Network isolation still requires running the API/worker inside a locked-down container (no egress, read-only FS) — do that before executing untrusted plugins in a multi-tenant deployment.
 - No-GT scores are proxy metrics, not ground truth — this is stated in every report
 - The PDF report includes a pairwise statistical comparison (Wilcoxon signed-rank + Cliff's delta, Holm–Bonferroni corrected) when ground truth and multiple seeds are available
 - Cluster count estimation uses knee detection; typically within ±2 of true count
