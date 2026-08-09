@@ -1,0 +1,39 @@
+# iSpot Python dependencies
+# Install with: pip install -r requirements.txt
+
+# Web framework
+fastapi==0.116.1
+uvicorn==0.35.0
+python-multipart==0.0.20
+
+# Core scientific stack
+numpy==2.1.0
+scipy==1.15.0
+pandas>=2.0
+scikit-learn==1.7.1
+
+# Spatial transcriptomics
+scanpy==1.11.4
+anndata==0.12.1
+squidpy==1.6.5
+
+# Graph / clustering
+networkx==3.5
+igraph==0.11.9
+leidenalg==0.10.2
+louvain==0.8.2
+
+# Deep learning (for GNN-based methods)
+torch==2.7.1
+torch-geometric==2.8.0.post1
+torch-scatter==2.1.2
+
+# Visualization
+matplotlib==3.10.5
+seaborn==0.13.2
+
+# Report generation
+reportlab==4.4.3
+
+# HTTP
+requests>=2.28
