@@ -542,6 +542,24 @@ body {
   border-left-color: var(--blue);
   color: #0260c0;
 }
+.alert-warning {
+  background: rgba(255, 193, 7, 0.10);
+  border-left-color: #e0a800;
+  color: #8a6d00;
+}
+
+/* Partial-failure summary in the results panel */
+.method-fail-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.method-fail-list li {
+  margin-bottom: 2px;
+}
+.method-fail-list code {
+  color: #8a5200;
+}
 
 /* Loading spinner */
 .spinner {
