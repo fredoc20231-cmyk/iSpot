@@ -42,8 +42,11 @@ Then open `http://localhost:8100` in your browser.
 | GET | `/api/jobs/{id}/results` | Get job results |
 | GET | `/api/jobs/{id}/download/{filename}` | Download deliverable |
 | GET | `/api/meta-learning/stats` | Meta-learning database stats |
+| GET | `/api/meta-learning/recommend` | Method recommendation (optional `?job_id=`) |
+| GET | `/api/plugins` | List registered methods/plugins |
+| POST | `/api/plugins/register` | Register a plugin (gated; see notes) |
 
-_Planned (not yet implemented):_ `POST /api/plugins/register`, `GET /api/meta-learning/recommend`.
+Mutating endpoints (`/api/upload`, `/api/benchmark`, `/api/plugins/register`) require the `X-API-Key` header when `ISPOT_API_KEY` is set.
 
 ## Project Structure
 
@@ -114,6 +117,9 @@ iSpot/
 | `ISPOT_MAX_SPOTS` | `500000` | Maximum spots per dataset (rejected before dispatch) |
 | `ISPOT_ALLOWED_ORIGINS` | `http://localhost:8100,http://127.0.0.1:8100` | Comma-separated CORS origins (no wildcard with credentials) |
 | `ISPOT_JOB_TTL_DAYS` | `7` | Retention window for uploaded-but-never-completed jobs |
+| `ISPOT_API_KEY` | _(unset)_ | If set, mutating endpoints require this key via `X-API-Key` |
+| `ISPOT_ENABLE_PLUGIN_REGISTER` | _(unset)_ | Set to `1` to allow `POST /api/plugins/register` (executes plugin code) |
+| `ISPOT_PLUGIN_TIMEOUT` / `ISPOT_PLUGIN_MEM_MB` | `600` / `4096` | Sandbox caps for plugin execution |
 
 ## Notes
 

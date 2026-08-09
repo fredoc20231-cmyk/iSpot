@@ -29,7 +29,10 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Request
+from fastapi import (
+    FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Request,
+    Header, Depends,
+)
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -58,7 +61,11 @@ from ispot.deliverables import (
     generate_ranking_table, generate_figures,
     generate_viewer_data, generate_report,
 )
-from ispot.plugins import discover_plugins, get_all_method_names
+from ispot.plugins import (
+    discover_plugins, get_all_method_names, list_plugins, get_plugin,
+    validate_plugin, _load_plugin_file, _PLUGIN_REGISTRY,
+)
+from ispot import auth
 from ispot.job_status import classify_job_status
 from ispot.stats_compare import build_comparison_table
 from ispot.jobstore import create_job_store
@@ -129,6 +136,13 @@ app.add_middleware(
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 
+async def require_api_key(x_api_key: Optional[str] = Header(default=None)):
+    """Auth dependency: enforce X-API-Key when ISPOT_API_KEY is configured."""
+    if not auth.is_authorized(auth.get_configured_key(), x_api_key):
+        raise HTTPException(status_code=401, detail="Missing or invalid API key.")
+    return True
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
     """Serve the main frontend page."""
@@ -169,6 +183,11 @@ class BenchmarkRequest(BaseModel):
     ground_truth_col: str | None = None
     use_meta_learning: bool = True
     no_gt_weights: dict | None = None
+
+
+class PluginRegisterRequest(BaseModel):
+    filepath: str | None = None   # server-side path to a plugin .py
+    package: str | None = None    # installed pip package exposing an entry point
 
 
 class JobStatus(BaseModel):
@@ -278,6 +297,7 @@ async def upload_data(
     platform: str | None = Form(None),
     sample_id: str | None = Form(None),
     ground_truth_col: str | None = Form(None),
+    _auth: bool = Depends(require_api_key),
 ):
     """Upload spatial transcriptomics data.
 
@@ -336,6 +356,7 @@ async def upload_data(
 async def start_benchmark(
     request: BenchmarkRequest,
     background_tasks: BackgroundTasks,
+    _auth: bool = Depends(require_api_key),
 ):
     """Start a benchmark job.
 
@@ -434,6 +455,83 @@ async def meta_learning_stats():
         "platforms": df["platform"].value_counts().to_dict() if len(df) > 0 else {},
         "cv_r2": cv_r2_sanitized,
     }
+
+
+@app.get("/api/meta-learning/recommend")
+async def meta_learning_recommend(job_id: str | None = None):
+    """Recommend methods for a dataset from the meta-learning model.
+
+    If ``job_id`` is given and that job has been profiled, the recommendation
+    is conditioned on its data features; otherwise a general (cold-start /
+    low-confidence) ranking is returned.
+    """
+    features: dict = {}
+    if job_id and job_id in jobs:
+        features = jobs[job_id].get("data_profile", {}) or {}
+    result = ml_model.predict(features)
+    return _sanitize_json({"based_on_job": job_id, "recommendation": result})
+
+
+@app.get("/api/plugins")
+async def list_registered_plugins():
+    """List all registered methods/plugins and their metadata."""
+    out = {}
+    for name, info in list_plugins().items():
+        out[name] = {
+            "category": info.category,
+            "compute_tier": info.compute_tier,
+            "source": info.source,
+            "is_stochastic": info.is_stochastic,
+            "is_r_based": info.is_r_based,
+            "description": info.description,
+            "author": info.author,
+            "version": info.version,
+        }
+    return {"plugins": out, "count": len(out)}
+
+
+@app.post("/api/plugins/register")
+async def register_plugin(
+    request: PluginRegisterRequest,
+    _auth: bool = Depends(require_api_key),
+):
+    """Register a community plugin from a server-side file or pip package.
+
+    Disabled unless ISPOT_ENABLE_PLUGIN_REGISTER=1, because loading a plugin
+    executes its code in this process. For untrusted plugins, run execution
+    through ispot.plugins.run_plugin_sandboxed and host the API in a
+    locked-down container. Uploaded plugin *files* are intentionally not
+    accepted over HTTP.
+    """
+    if os.environ.get("ISPOT_ENABLE_PLUGIN_REGISTER", "").strip() not in ("1", "true", "True"):
+        raise HTTPException(
+            status_code=403,
+            detail="Plugin registration is disabled. Set ISPOT_ENABLE_PLUGIN_REGISTER=1 to enable.",
+        )
+    if not request.filepath and not request.package:
+        raise HTTPException(status_code=400, detail="Provide 'filepath' or 'package'.")
+
+    before = set(_PLUGIN_REGISTRY.keys())
+    if request.filepath:
+        if not os.path.exists(request.filepath):
+            raise HTTPException(status_code=404, detail=f"File not found: {request.filepath}")
+        _load_plugin_file(request.filepath, source="local")
+    else:
+        discover_plugins()  # picks up pip entry points
+
+    new_names = sorted(set(_PLUGIN_REGISTRY.keys()) - before)
+    if not new_names:
+        raise HTTPException(status_code=400, detail="No new plugin registered from the source.")
+
+    # Validate each newly registered plugin against a synthetic dataset.
+    validations = {}
+    for name in new_names:
+        try:
+            validations[name] = validate_plugin(get_plugin(name))
+        except Exception as e:  # pragma: no cover - defensive
+            validations[name] = {"valid": False, "error": str(e)}
+
+    return _sanitize_json({"registered": new_names, "validation": validations})
 
 
 # ---------------------------------------------------------------------------
