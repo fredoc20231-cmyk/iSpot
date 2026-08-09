@@ -107,11 +107,17 @@ iSpot/
 |----------|---------|-------------|
 | `ISPOT_HOST` | `0.0.0.0` | Server bind address |
 | `ISPOT_PORT` | `8100` | Server port |
+| `ISPOT_JOBS_DIR` | `<repo>/ispot_jobs` | Directory for job storage (uploads, results, DB) |
+| `ISPOT_SEED_CSV` | `<repo>/data/unified_results.csv` | Meta-learning seed data |
+| `ISPOT_MAX_UPLOAD_MB` | `500` | Maximum upload size (rejected with HTTP 413 above this) |
+| `ISPOT_MAX_SPOTS` | `500000` | Maximum spots per dataset (rejected before dispatch) |
 
 ## Notes
 
 - R-based methods (BayesSpace) require R + Bioconductor packages installed
 - Meta-learning DB is auto-seeded from `data/unified_results.csv` on first startup
-- Job files are stored in `ispot_jobs/` (created automatically)
+- Job files are stored under `ISPOT_JOBS_DIR` (defaults to `ispot_jobs/`, created automatically)
+- A job reports `completed_partial` when some methods fail but others succeed; `failed` only when every method fails. Per-method errors are in the job's `method_summary`.
+- Uploads must be `.h5ad`, `.h5`, or `.csv` and stay within the size/spot-count limits above
 - No-GT scores are proxy metrics, not ground truth — this is stated in every report
 - Cluster count estimation uses knee detection; typically within ±2 of true count

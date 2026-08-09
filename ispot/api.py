@@ -59,6 +59,8 @@ from ispot.deliverables import (
     generate_viewer_data, generate_report,
 )
 from ispot.plugins import discover_plugins, get_all_method_names
+from ispot.job_status import classify_job_status
+from ispot import validation
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -155,7 +157,7 @@ class BenchmarkRequest(BaseModel):
 
 class JobStatus(BaseModel):
     job_id: str
-    status: str  # "queued", "running", "completed", "failed"
+    status: str  # "queued", "running", "completed", "completed_partial", "failed"
     progress: float  # 0.0 to 1.0
     message: str
     created_at: str
@@ -249,14 +251,23 @@ async def upload_data(
     The file is stored temporarily and deleted after the benchmark completes
     (or after 7 days, whichever comes first).
     """
+    # Reject unsupported file types before creating any job state.
+    try:
+        validation.validate_extension(file.filename)
+    except validation.ValidationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
     job_id = str(uuid.uuid4())[:12]
     job_dir = get_job_dir(job_id)
     job_dir.mkdir(exist_ok=True)
 
-    # Save uploaded file
+    # Save uploaded file, enforcing the configured size cap while streaming.
     file_path = job_dir / file.filename
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    try:
+        file_size = validation.stream_to_file(file.file, str(file_path))
+    except validation.ValidationError as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
     # Auto-detect platform if not specified
     if platform is None:
@@ -279,7 +290,7 @@ async def upload_data(
         "job_id": job_id,
         "platform": platform,
         "filename": file.filename,
-        "file_size": os.path.getsize(file_path),
+        "file_size": file_size,
         "message": "Upload successful. Use POST /api/benchmark to start analysis.",
     }
 
@@ -334,7 +345,7 @@ async def get_job_results(job_id: str):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
 
     job = jobs[job_id]
-    if job["status"] != "completed":
+    if job["status"] not in ("completed", "completed_partial"):
         raise HTTPException(status_code=400, detail=f"Job not completed. Status: {job['status']}")
 
     job_dir = get_job_dir(job_id)
@@ -350,6 +361,8 @@ async def get_job_results(job_id: str):
         "n_clusters": job.get("n_clusters", None),
         "has_ground_truth": job.get("has_ground_truth", False),
         "meta_learning": job.get("meta_learning", {}),
+        "status": job["status"],
+        "method_summary": job.get("method_summary", {}),
     })
 
 
@@ -421,6 +434,16 @@ def run_benchmark_task(
 
         features = profile_data(adata, platform=platform)
         job["data_profile"] = features.to_dict()
+
+        # Resource guard: reject datasets larger than the configured cap before
+        # dispatching any compute-heavy method.
+        try:
+            validation.validate_spot_count(getattr(features, "n_spots", None))
+        except validation.ValidationError as e:
+            job["status"] = "failed"
+            job["message"] = e.message
+            job["progress"] = 1.0
+            return
 
         has_gt = adata.obs["has_ground_truth"].any()
         job["has_ground_truth"] = has_gt
@@ -538,6 +561,16 @@ def run_benchmark_task(
 
         results_df = pd.DataFrame(all_results)
 
+        # Classify the outcome: a job is only "failed" if EVERY method failed.
+        # Partial success still yields usable rankings for the methods that ran.
+        summary = classify_job_status(all_results)
+        job["method_summary"] = summary
+        if summary["status"] == "failed":
+            job["status"] = "failed"
+            job["progress"] = 1.0
+            job["message"] = "All methods failed; no results to report."
+            return
+
         # --- Step 7: Compute no-GT scores if needed ---
         if not has_gt and method_labels:
             job["message"] = "Computing no-GT scores..."
@@ -646,9 +679,15 @@ def run_benchmark_task(
         )
 
         # --- Step 10: Complete ---
-        job["status"] = "completed"
+        job["status"] = summary["status"]  # "completed" or "completed_partial"
         job["progress"] = 1.0
-        job["message"] = "Benchmark completed successfully"
+        if summary["status"] == "completed_partial":
+            failed_names = ", ".join(m["method"] for m in summary["failed_methods"])
+            job["message"] = (
+                f"Completed with {summary['n_failed']} failed method(s): {failed_names}"
+            )
+        else:
+            job["message"] = "Benchmark completed successfully"
         job["completed_at"] = datetime.now().isoformat()
 
         # Clean up uploaded file (keep results)
