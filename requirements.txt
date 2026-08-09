@@ -9,7 +9,7 @@ python-multipart==0.0.20
 # Core scientific stack
 numpy==2.1.0
 scipy==1.15.0
-pandas>=2.0
+pandas==2.2.3
 scikit-learn==1.7.1
 
 # Spatial transcriptomics
@@ -36,4 +36,4 @@ seaborn==0.13.2
 reportlab==4.4.3
 
 # HTTP
-requests>=2.28
+requests==2.32.3

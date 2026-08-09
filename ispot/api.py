@@ -62,6 +62,7 @@ from ispot.plugins import discover_plugins, get_all_method_names
 from ispot.job_status import classify_job_status
 from ispot.stats_compare import build_comparison_table
 from ispot.jobstore import create_job_store
+from ispot.cleanup import cleanup_expired_jobs
 from ispot import validation
 
 # ---------------------------------------------------------------------------
@@ -107,9 +108,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Restrict CORS to explicit origins. Wildcard "*" with allow_credentials=True
+# is rejected by browsers and defeats CORS, so origins come from
+# ISPOT_ALLOWED_ORIGINS (comma-separated), defaulting to localhost.
+_origins_env = os.environ.get("ISPOT_ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] or [
+    "http://localhost:8100",
+    "http://127.0.0.1:8100",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production: restrict to frontend domain
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -397,11 +407,14 @@ async def get_job_results(job_id: str):
 @app.get("/api/jobs/{job_id}/download/{filename}")
 async def download_result(job_id: str, filename: str):
     """Download a specific result file."""
-    job_dir = get_job_dir(job_id)
-    file_path = job_dir / "results" / filename
-    if not file_path.exists():
+    results_dir = get_job_dir(job_id) / "results"
+    try:
+        file_path = validation.safe_child_path(str(results_dir), filename)
+    except validation.ValidationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File {filename} not found.")
-    return FileResponse(str(file_path))
+    return FileResponse(file_path)
 
 
 @app.get("/api/meta-learning/stats")
@@ -670,7 +683,7 @@ def run_benchmark_task(
             ml_db.record_run(record)
 
         # Retrain model if enough new data
-        if ml_db.count_runs() % 50 == 0:
+        if ml_db.count_runs() - ml_model.last_trained_count >= 50:
             ml_model.train(ml_db)
 
         # --- Step 9: Generate deliverables ---
@@ -768,3 +781,16 @@ async def startup_event():
     print(f"  Meta-learning runs: {ml_db.count_runs()}")
     print(f"  Platforms: {list(LOADER_REGISTRY.keys())}")
     print(f"  Job workspace: {WORKSPACE_DIR}\n")
+
+    # Retention: drop directories for jobs that never completed and are older
+    # than the configured window (ISPOT_JOB_TTL_DAYS, default 7).
+    try:
+        ttl_days = int(float(os.environ.get("ISPOT_JOB_TTL_DAYS", "7")))
+        removed = cleanup_expired_jobs(jobs, str(WORKSPACE_DIR), max_age_days=ttl_days)
+        for jid in removed:
+            jobs.pop(jid, None)
+            job_store.delete(jid)
+        if removed:
+            print(f"  Cleaned up {len(removed)} expired job(s)")
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"  Job cleanup skipped: {e}")

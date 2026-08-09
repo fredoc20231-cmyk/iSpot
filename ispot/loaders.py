@@ -21,14 +21,15 @@ import scipy.sparse as sp
 import anndata as ad
 import h5py
 
-# Data paths — check shared-workspace first, then workspace
-DLPFC_DIR = "/mnt/shared-workspace/shared/data/dlpfc_h5ad"
-HER2_DIR = "/mnt/shared-workspace/shared/data/her2st/data"
-MOSTA_DIR = "/mnt/shared-workspace/shared/data"
+# Data paths — overridable via environment for portability across deployments.
+# Defaults preserve the original dev-container layout.
+DLPFC_DIR = os.environ.get("ISPOT_DLPFC_DIR", "/mnt/shared-workspace/shared/data/dlpfc_h5ad")
+HER2_DIR = os.environ.get("ISPOT_HER2_DIR", "/mnt/shared-workspace/shared/data/her2st/data")
+MOSTA_DIR = os.environ.get("ISPOT_MOSTA_DIR", "/mnt/shared-workspace/shared/data")
 
 # Fallback paths
-DLPFC_DIR_FALLBACK = "/workspace/dlpfc_h5"
-HER2_DIR_FALLBACK = "/workspace/her2st/data"
+DLPFC_DIR_FALLBACK = os.environ.get("ISPOT_DLPFC_DIR_FALLBACK", "/workspace/dlpfc_h5")
+HER2_DIR_FALLBACK = os.environ.get("ISPOT_HER2_DIR_FALLBACK", "/workspace/her2st/data")
 
 # Cluster counts from author's constants.py/constants.R
 CLUSTER_COUNTS = {

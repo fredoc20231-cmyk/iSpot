@@ -58,6 +58,36 @@ def test_stream_to_file_over_cap_raises_and_cleans_up(tmp_path):
     assert not dest.exists()  # partial file removed
 
 
+# --- path traversal --------------------------------------------------------
+
+def test_safe_child_path_allows_normal_file(tmp_path):
+    base = tmp_path / "results"
+    base.mkdir()
+    got = validation.safe_child_path(str(base), "ranking_table.csv")
+    assert got == str((base / "ranking_table.csv").resolve())
+
+
+@pytest.mark.parametrize("evil", [
+    "../../meta_learning.db",
+    "../../../etc/passwd",
+    "/etc/passwd",
+    "sub/../../escape.txt",
+])
+def test_safe_child_path_rejects_traversal(tmp_path, evil):
+    base = tmp_path / "results"
+    base.mkdir()
+    with pytest.raises(ValidationError) as exc:
+        validation.safe_child_path(str(base), evil)
+    assert exc.value.status_code == 400
+
+
+def test_safe_child_path_allows_nested_subdir(tmp_path):
+    base = tmp_path / "results"
+    base.mkdir()
+    got = validation.safe_child_path(str(base), "figs/umap.png")
+    assert got == str((base / "figs" / "umap.png").resolve())
+
+
 # --- env-configured limits -------------------------------------------------
 
 def test_env_overrides_limits(monkeypatch):

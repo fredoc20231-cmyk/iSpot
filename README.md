@@ -112,6 +112,8 @@ iSpot/
 | `ISPOT_SEED_CSV` | `<repo>/data/unified_results.csv` | Meta-learning seed data |
 | `ISPOT_MAX_UPLOAD_MB` | `500` | Maximum upload size (rejected with HTTP 413 above this) |
 | `ISPOT_MAX_SPOTS` | `500000` | Maximum spots per dataset (rejected before dispatch) |
+| `ISPOT_ALLOWED_ORIGINS` | `http://localhost:8100,http://127.0.0.1:8100` | Comma-separated CORS origins (no wildcard with credentials) |
+| `ISPOT_JOB_TTL_DAYS` | `7` | Retention window for uploaded-but-never-completed jobs |
 
 ## Notes
 
@@ -121,6 +123,9 @@ iSpot/
 - Job status is persisted (SQLite by default) so it survives an API restart; `docker-compose.yml` sketches the multi-service (API + Redis + worker) target
 - A job reports `completed_partial` when some methods fail but others succeed; `failed` only when every method fails. Per-method errors are in the job's `method_summary`.
 - Uploads must be `.h5ad`, `.h5`, or `.csv` and stay within the size/spot-count limits above
+- Downloads are constrained to a job's own `results/` directory (path-traversal attempts are rejected)
+- Uploaded-but-never-completed jobs are cleaned up after `ISPOT_JOB_TTL_DAYS` (on startup)
+- **Plugin security:** community plugins execute as in-process Python and are trusted. Only enable plugins you trust on a single-tenant instance; do not expose plugin registration in a multi-tenant deployment without process/container sandboxing.
 - No-GT scores are proxy metrics, not ground truth — this is stated in every report
 - The PDF report includes a pairwise statistical comparison (Wilcoxon signed-rank + Cliff's delta, Holm–Bonferroni corrected) when ground truth and multiple seeds are available
 - Cluster count estimation uses knee detection; typically within ±2 of true count

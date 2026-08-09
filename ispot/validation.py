@@ -81,6 +81,21 @@ def validate_spot_count(n_spots: int | None, max_spots: int | None = None) -> No
         )
 
 
+def safe_child_path(base_dir: str, name: str) -> str:
+    """Resolve ``name`` under ``base_dir``, rejecting path traversal.
+
+    Prevents ``../`` sequences and absolute paths from escaping ``base_dir``
+    (e.g. a download request for ``../../meta_learning.db``). Returns the
+    resolved absolute path; raises ``ValidationError`` (400) if it would fall
+    outside ``base_dir``. Does not require the path to exist.
+    """
+    base = os.path.realpath(str(base_dir))
+    target = os.path.realpath(os.path.join(base, name))
+    if target != base and not target.startswith(base + os.sep):
+        raise ValidationError(f"Invalid path: {name!r}", status_code=400)
+    return target
+
+
 def stream_to_file(
     fileobj: BinaryIO,
     dest_path: str,

@@ -16,6 +16,7 @@ import time
 import traceback
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 
@@ -26,10 +27,11 @@ from ispot.loaders import load_sample, get_n_clusters, DATASET_SLIDES, qc_check
 def _get_git_commit():
     """Get current git commit hash if in a git repo."""
     try:
+        repo_root = Path(__file__).resolve().parent.parent
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=5,
-            cwd="/workspace"
+            cwd=str(repo_root)
         )
         if result.returncode == 0:
             return result.stdout.strip()[:12]

@@ -293,6 +293,9 @@ class MetaLearningModel:
         self.feature_columns: list[str] | None = None
         self.cv_r2: dict[str, float] = {}
         self.is_trained = False
+        # Number of DB runs present at the last successful train(); used to
+        # trigger periodic retraining on a threshold rather than exact modulo.
+        self.last_trained_count = 0
 
     def train(self, db: MetaLearningDB) -> dict:
         """Train per-method models from the database.
@@ -358,6 +361,7 @@ class MetaLearningModel:
             }
 
         self.is_trained = len(self.models) > 0
+        self.last_trained_count = len(df)
         return summary
 
     def predict(self, features: dict) -> dict:
