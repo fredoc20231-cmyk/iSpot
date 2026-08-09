@@ -22,8 +22,10 @@ from dataclasses import asdict
 from typing import Optional
 
 from sklearn.linear_model import Ridge
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.isotonic import IsotonicRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, cross_val_predict
 from scipy.stats import spearmanr
 
 
@@ -275,21 +277,39 @@ def encode_single_feature_vector(
 # ---------------------------------------------------------------------------
 
 class MetaLearningModel:
-    """Per-method Ridge regression model for score prediction.
+    """Per-method regression model for score prediction.
 
-    Trains one Ridge model per method, using data features as predictors
-    and benchmark scores as targets. Predicts which methods will perform
-    best on a new dataset.
+    Trains one model per method, using data features as predictors and
+    benchmark scores as targets, and predicts which methods will perform best
+    on a new dataset.
 
-    Cold start: if fewer than min_training_samples per method, falls back
-    to uniform prediction (all methods ranked equally).
+    Model selection scales with data volume (roadmap item 10): Ridge for the
+    cold-start regime (regularizes well with few samples, interpretable) and a
+    gradient-boosted regressor once a method has >= ``gbt_min_samples`` runs
+    (captures nonlinear feature interactions like "GraphST does well on
+    hexagonal Visium but poorly on sparse MERFISH"). Predicted scores are
+    optionally isotonically calibrated against out-of-fold predictions so the
+    numbers are comparable across methods.
+
+    Cold start: if fewer than ``min_samples_per_method`` runs for a method,
+    it falls back to a uniform 0.5 prediction.
     """
 
-    def __init__(self, min_samples_per_method: int = 5, alpha: float = 1.0):
+    def __init__(
+        self,
+        min_samples_per_method: int = 5,
+        alpha: float = 1.0,
+        gbt_min_samples: int = 40,
+        calibrate: bool = True,
+    ):
         self.min_samples = min_samples_per_method
         self.alpha = alpha
-        self.models: dict[str, Ridge] = {}
+        self.gbt_min_samples = gbt_min_samples
+        self.calibrate = calibrate
+        self.models: dict[str, object] = {}
         self.scalers: dict[str, StandardScaler] = {}
+        self.calibrators: dict[str, IsotonicRegression] = {}
+        self.model_types: dict[str, str] = {}
         self.feature_columns: list[str] | None = None
         self.cv_r2: dict[str, float] = {}
         self.is_trained = False
@@ -297,12 +317,30 @@ class MetaLearningModel:
         # trigger periodic retraining on a threshold rather than exact modulo.
         self.last_trained_count = 0
 
+    def _make_estimator(self, n: int):
+        """Choose the estimator for a method with ``n`` training samples.
+
+        Returns ``(estimator, model_type)``. Gradient boosting kicks in once
+        there is enough data to fit it without overfitting; Ridge otherwise.
+        """
+        if n >= self.gbt_min_samples:
+            est = HistGradientBoostingRegressor(
+                max_depth=3,
+                learning_rate=0.05,
+                max_iter=200,
+                l2_regularization=1.0,
+                random_state=42,
+            )
+            return est, "gbt"
+        return Ridge(alpha=self.alpha), "ridge"
+
     def train(self, db: MetaLearningDB) -> dict:
         """Train per-method models from the database.
 
         Returns
         -------
-        dict: training summary with per-method sample counts and CV R^2.
+        dict: training summary with per-method sample counts, CV R^2, and the
+        model type chosen for each method.
         """
         df = db.get_all_runs()
         if len(df) == 0:
@@ -329,34 +367,54 @@ class MetaLearningModel:
             X = encode_features(method_df, self.feature_columns)
             y = method_df["score"].values.astype(float)
 
-            # Standardize features
+            # Standardize features (harmless for trees, needed for Ridge)
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)
 
-            # Cross-validated R^2
+            estimator, model_type = self._make_estimator(n)
+
+            # Cross-validated R^2 with the chosen estimator
+            cv_r2 = None
             if n >= 5:
                 try:
                     cv_scores = cross_val_score(
-                        Ridge(alpha=self.alpha), X_scaled, y,
+                        self._make_estimator(n)[0], X_scaled, y,
                         cv=min(5, n), scoring="r2",
                     )
                     cv_r2 = float(np.mean(cv_scores))
                 except Exception:
                     cv_r2 = None
-            else:
-                cv_r2 = None
 
-            # Train final model
-            model = Ridge(alpha=self.alpha)
-            model.fit(X_scaled, y)
+            # Isotonic calibration of predicted scores against out-of-fold
+            # predictions, so predictions are comparable across methods.
+            calibrator = None
+            if self.calibrate and n >= 10:
+                try:
+                    oof = cross_val_predict(
+                        self._make_estimator(n)[0], X_scaled, y, cv=min(5, n)
+                    )
+                    calibrator = IsotonicRegression(
+                        y_min=0.0, y_max=1.0, out_of_bounds="clip"
+                    )
+                    calibrator.fit(oof, y)
+                except Exception:
+                    calibrator = None
 
-            self.models[method] = model
+            # Train final model on all data
+            estimator.fit(X_scaled, y)
+
+            self.models[method] = estimator
             self.scalers[method] = scaler
             self.cv_r2[method] = cv_r2
+            self.model_types[method] = model_type
+            if calibrator is not None:
+                self.calibrators[method] = calibrator
 
             summary["methods"][method] = {
                 "n_samples": n,
                 "cv_r2": cv_r2,
+                "model_type": model_type,
+                "calibrated": calibrator is not None,
                 "status": "trained",
             }
 
@@ -398,6 +456,9 @@ class MetaLearningModel:
             scaler = self.scalers[method]
             X_scaled = scaler.transform(X)
             pred = float(model.predict(X_scaled)[0])
+            calibrator = self.calibrators.get(method)
+            if calibrator is not None:
+                pred = float(calibrator.predict([pred])[0])
             predictions[method] = pred
             if self.cv_r2.get(method) is not None:
                 r2s.append(self.cv_r2[method])
