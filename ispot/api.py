@@ -61,6 +61,7 @@ from ispot.deliverables import (
 from ispot.plugins import discover_plugins, get_all_method_names
 from ispot.job_status import classify_job_status
 from ispot.stats_compare import build_comparison_table
+from ispot.jobstore import create_job_store
 from ispot import validation
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,10 @@ WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Meta-learning database (persistent across restarts)
 DB_PATH = str(WORKSPACE_DIR / "meta_learning.db")
+
+# Persistent job store so job status survives an API restart/crash. Backend is
+# selectable via ISPOT_JOBS_BACKEND (sqlite default, or memory).
+job_store = create_job_store(str(WORKSPACE_DIR / "jobs.db"))
 
 # Seed data shipped with the repo; override with ISPOT_SEED_CSV.
 SEED_CSV = os.environ.get("ISPOT_SEED_CSV", str(REPO_ROOT / "data" / "unified_results.csv"))
@@ -170,6 +175,26 @@ class JobStatus(BaseModel):
 # ---------------------------------------------------------------------------
 
 jobs: dict[str, dict] = {}
+
+# Restore any jobs persisted by a previous process so they survive restarts.
+try:
+    for _j in job_store.all():
+        jobs[_j["job_id"]] = _j
+    if jobs:
+        print(f"Restored {len(jobs)} job(s) from the job store")
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"Could not restore jobs from store: {_e}")
+
+
+def save_job(job_id: str) -> None:
+    """Write-through the current in-memory job state to the persistent store."""
+    job = jobs.get(job_id)
+    if job is None:
+        return
+    try:
+        job_store.save(job)
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"Failed to persist job {job_id}: {e}")
 
 
 def get_job_dir(job_id: str) -> Path:
@@ -286,6 +311,7 @@ async def upload_data(
         "sample_id": sample_id,
         "ground_truth_col": ground_truth_col,
     }
+    save_job(job_id)
 
     return {
         "job_id": job_id,
@@ -314,6 +340,7 @@ async def start_benchmark(
     job["status"] = "queued"
     job["progress"] = 0.0
     job["message"] = "Benchmark queued"
+    save_job(job_id)
 
     # Add to background tasks
     background_tasks.add_task(
@@ -421,6 +448,7 @@ def run_benchmark_task(
         job["status"] = "running"
         job["message"] = "Loading data..."
         job["progress"] = 0.05
+        save_job(job_id)
 
         adata = load_data(
             job["file_path"],
@@ -444,6 +472,7 @@ def run_benchmark_task(
             job["status"] = "failed"
             job["message"] = e.message
             job["progress"] = 1.0
+            save_job(job_id)
             return
 
         has_gt = adata.obs["has_ground_truth"].any()
@@ -570,6 +599,7 @@ def run_benchmark_task(
             job["status"] = "failed"
             job["progress"] = 1.0
             job["message"] = "All methods failed; no results to report."
+            save_job(job_id)
             return
 
         # --- Step 7: Compute no-GT scores if needed ---
@@ -710,6 +740,7 @@ def run_benchmark_task(
         else:
             job["message"] = "Benchmark completed successfully"
         job["completed_at"] = datetime.now().isoformat()
+        save_job(job_id)
 
         # Clean up uploaded file (keep results)
         try:
@@ -721,6 +752,7 @@ def run_benchmark_task(
         job["status"] = "failed"
         job["message"] = f"Error: {str(e)}"
         job["progress"] = 1.0
+        save_job(job_id)
         traceback.print_exc()
 
 
