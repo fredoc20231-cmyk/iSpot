@@ -26,3 +26,25 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+  integration:
+    name: Integration (boot + pipeline smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the runnable scientific stack
+        # Enough to boot the API and run the deps-light pipeline (Leiden/PCA).
+        # Excludes torch/tensorflow/R backends — those methods aren't exercised.
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy pandas scikit-learn anndata \
+            scanpy leidenalg igraph scikit-misc \
+            matplotlib reportlab fastapi httpx python-multipart pytest
+
+      - name: Run integration tests
+        run: pytest tests/integration -q
