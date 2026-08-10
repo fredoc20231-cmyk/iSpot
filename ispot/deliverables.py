@@ -481,19 +481,19 @@ def generate_viewer_data(
         viewer_data["spots"].append(spot)
 
     # Method labels. A method whose label count doesn't match the viewer's spot
-    # count is a real upstream misalignment (preprocessing dropped spots that
-    # the label array still counts). Record and skip it rather than silently
-    # truncating/padding (which would garble the rendered shape) or crashing the
-    # whole deliverable — consistent with the platform's partial-failure model.
+    # count is a real upstream misalignment (e.g. preprocessing dropped spots
+    # that the label array still counts). Fail loudly with a traceable error
+    # rather than silently truncating/padding, which would garble the rendered
+    # shape. This must be fixed upstream, not hidden here.
     n_spots = adata.shape[0]
-    viewer_data["excluded_methods"] = {}
     for method, labels in method_labels.items():
         if len(labels) != n_spots:
-            viewer_data["excluded_methods"][method] = (
-                f"{len(labels)} labels vs {n_spots} viewer spots — spot-count "
-                f"mismatch between preprocessing and label generation"
+            raise ValueError(
+                f"Method '{method}' produced {len(labels)} labels but the "
+                f"viewer's adata has {n_spots} spots — spot-count mismatch "
+                f"between preprocessing and label generation must be fixed "
+                f"upstream, not silently truncated/padded here."
             )
-            continue
         viewer_data["methods"][method] = [str(l) for l in labels]
 
     # Save as JSON (may be large; consider chunking for very large datasets)

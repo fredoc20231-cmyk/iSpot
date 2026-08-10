@@ -138,9 +138,8 @@ def test_space_ranger_bundle_hires_only(tmp_path):
     assert "tissue_mask_for_viewer" in adata.uns
 
 
-def test_viewer_data_includes_mask_and_skips_mismatch(tmp_path):
-    # Task 4: mask is passed through; a length-mismatched method is recorded
-    # under excluded_methods instead of crashing.
+def test_viewer_data_includes_mask(tmp_path):
+    # Task 4: the tissue mask is passed through to the viewer JSON.
     pytest.importorskip("matplotlib")
     from ispot.deliverables import generate_viewer_data
 
@@ -153,13 +152,24 @@ def test_viewer_data_includes_mask_and_skips_mismatch(tmp_path):
     }
     adata.uns["tissue_mask_scale_factor"] = 0.2
 
-    method_labels = {
-        "good": np.array(["0"] * n),
-        "bad": np.array(["0"] * (n - 1)),  # wrong length
-    }
-    path = generate_viewer_data(adata, method_labels, has_ground_truth=False, output_dir=str(tmp_path))
+    path = generate_viewer_data(
+        adata, {"good": np.array(["0"] * n)}, has_ground_truth=False, output_dir=str(tmp_path)
+    )
     data = json.load(open(path))
-
     assert "tissue_mask" in data and data["tissue_mask_scale_factor"] == 0.2
     assert "good" in data["methods"]
-    assert "bad" in data["excluded_methods"] and "bad" not in data["methods"]
+
+
+def test_viewer_data_raises_on_spot_count_mismatch(tmp_path):
+    # Task 4 / checklist #5: a length mismatch is a loud, traceable error.
+    pytest.importorskip("matplotlib")
+    from ispot.deliverables import generate_viewer_data
+
+    n = 12
+    adata = ad.AnnData(np.ones((n, 4), dtype="float32"))
+    adata.obsm["spatial"] = np.random.default_rng(0).random((n, 2))
+    with pytest.raises(ValueError):
+        generate_viewer_data(
+            adata, {"bad": np.array(["0"] * (n - 1))},
+            has_ground_truth=False, output_dir=str(tmp_path),
+        )
