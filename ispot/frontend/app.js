@@ -506,22 +506,45 @@
     // Set initial method
     state.viewerMethod = methods[0] || '__gt__';
 
-    // Compute bounds
-    const coords = data.spots.map(s => [s.x, s.y]);
-    const xs = coords.map(c => c[0]);
-    const ys = coords.map(c => c[1]);
-    const xMin = Math.min(...xs), xMax = Math.max(...xs);
-    const yMin = Math.min(...ys), yMax = Math.max(...ys);
-    state.viewerBounds = { xMin, xMax, yMin, yMax };
-
-    // Size canvas
-    const containerWidth = container.clientWidth;
-    const aspectRatio = (yMax - yMin) / (xMax - xMin);
-    canvas.width = containerWidth;
-    canvas.height = Math.min(containerWidth * aspectRatio, 600);
-    state.viewerScale = Math.min(canvas.width / (xMax - xMin), canvas.height / (yMax - yMin)) * 0.9;
-    state.viewerOffsetX = (canvas.width - (xMax - xMin) * state.viewerScale) / 2;
-    state.viewerOffsetY = (canvas.height - (yMax - yMin) * state.viewerScale) / 2;
+    // Configure the coordinate transform. Two modes:
+    //  - "image": a histology image is available; the content space is the
+    //    image in pixels and spots map via coord * scalef (canonical Visium
+    //    alignment, so spots land ON the tissue).
+    //  - "coords": no image; fall back to the spot bounding box.
+    const containerWidth = container.clientWidth || 800;
+    if (data.histology && data.histology.data_url) {
+      const H = data.histology;
+      state.viewerMode = 'image';
+      state.histScalef = H.scalef;
+      const aspect = H.height / H.width;
+      canvas.width = containerWidth;
+      canvas.height = Math.min(Math.max(1, containerWidth * aspect), 700);
+      state.viewerScale = Math.min(canvas.width / H.width, canvas.height / H.height);
+      state.viewerOffsetX = (canvas.width - H.width * state.viewerScale) / 2;
+      state.viewerOffsetY = (canvas.height - H.height * state.viewerScale) / 2;
+      state.spotRadius = H.spot_diameter_fullres
+        ? Math.max(1.5, 0.5 * H.spot_diameter_fullres * H.scalef * state.viewerScale)
+        : Math.max(1.5, Math.min(6, 0.4 * canvas.width / Math.sqrt(data.n_spots || 1)));
+      const img = new Image();
+      state.viewerImage = img;
+      state.viewerImageReady = false;
+      img.onload = () => { state.viewerImageReady = true; drawViewer(); };
+      img.src = H.data_url;
+    } else {
+      const xs = data.spots.map(s => s.x), ys = data.spots.map(s => s.y);
+      const xMin = Math.min(...xs), xMax = Math.max(...xs);
+      const yMin = Math.min(...ys), yMax = Math.max(...ys);
+      const dx = (xMax - xMin) || 1, dy = (yMax - yMin) || 1;
+      state.viewerMode = 'coords';
+      state.viewerBounds = { xMin, xMax, yMin, yMax };
+      const aspect = dy / dx;
+      canvas.width = containerWidth;
+      canvas.height = Math.min(Math.max(1, containerWidth * aspect), 700);
+      state.viewerScale = Math.min(canvas.width / dx, canvas.height / dy) * 0.95;
+      state.viewerOffsetX = (canvas.width - dx * state.viewerScale) / 2;
+      state.viewerOffsetY = (canvas.height - dy * state.viewerScale) / 2;
+      state.spotRadius = Math.max(1.5, Math.min(6, 0.4 * canvas.width / Math.sqrt(data.n_spots || 1)));
+    }
 
     // Mouse events for tooltip
     canvas.addEventListener('mousemove', (e) => onViewerMouseMove(e, tooltip));
@@ -552,6 +575,19 @@
     }
   }
 
+  function spotCanvasXY(s) {
+    if (state.viewerMode === 'image') {
+      return [
+        s.x * state.histScalef * state.viewerScale + state.viewerOffsetX,
+        s.y * state.histScalef * state.viewerScale + state.viewerOffsetY,
+      ];
+    }
+    return [
+      (s.x - state.viewerBounds.xMin) * state.viewerScale + state.viewerOffsetX,
+      (s.y - state.viewerBounds.yMin) * state.viewerScale + state.viewerOffsetY,
+    ];
+  }
+
   function drawViewer() {
     const ctx = state.viewerCtx;
     const canvas = state.viewerCanvas;
@@ -561,7 +597,16 @@
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (data.tissue_mask && data.tissue_mask_scale_factor) {
+    if (state.viewerMode === 'image') {
+      if (state.viewerImageReady && state.viewerImage) {
+        const H = data.histology;
+        ctx.drawImage(
+          state.viewerImage, 0, 0, H.width, H.height,
+          state.viewerOffsetX, state.viewerOffsetY,
+          H.width * state.viewerScale, H.height * state.viewerScale,
+        );
+      }
+    } else if (data.tissue_mask && data.tissue_mask_scale_factor) {
       drawTissueMask(ctx, data.tissue_mask, data.tissue_mask_scale_factor);
     }
 
@@ -580,14 +625,12 @@
     uniqueLabels.forEach((l, i) => { labelColors[l] = colors[i]; });
 
     // Draw spots
-    const spotSize = Math.max(2, state.viewerScale * 3);
+    const r = state.spotRadius || 2;
     for (let i = 0; i < data.spots.length; i++) {
-      const s = data.spots[i];
-      const x = (s.x - state.viewerBounds.xMin) * state.viewerScale + state.viewerOffsetX;
-      const y = (s.y - state.viewerBounds.yMin) * state.viewerScale + state.viewerOffsetY;
+      const [x, y] = spotCanvasXY(data.spots[i]);
       ctx.fillStyle = labelColors[labels[i]] || '#666';
       ctx.beginPath();
-      ctx.arc(x, y, spotSize, 0, 2 * Math.PI);
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
       ctx.fill();
     }
   }
@@ -600,16 +643,14 @@
     const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
     const my = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-    // Find nearest spot
+    // Find nearest spot (same transform as drawViewer)
     let nearest = -1;
     let minDist = Infinity;
-    const spotSize = Math.max(2, state.viewerScale * 3);
+    const hitR = Math.max(4, (state.spotRadius || 2) * 2);
     for (let i = 0; i < data.spots.length; i++) {
-      const s = data.spots[i];
-      const x = (s.x - state.viewerBounds.xMin) * state.viewerScale + state.viewerOffsetX;
-      const y = (s.y - state.viewerBounds.yMin) * state.viewerScale + state.viewerOffsetY;
+      const [x, y] = spotCanvasXY(data.spots[i]);
       const d = Math.sqrt((mx - x) ** 2 + (my - y) ** 2);
-      if (d < spotSize * 2 && d < minDist) {
+      if (d < hitR && d < minDist) {
         minDist = d;
         nearest = i;
       }

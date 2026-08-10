@@ -412,6 +412,57 @@ def _plot_component_radar(results):
 # 3. Interactive Viewer Data
 # ---------------------------------------------------------------------------
 
+def _embed_histology(viewer_data: dict, adata: ad.AnnData, max_dim: int = 1200) -> None:
+    """Embed a downscaled histology image + scalefactor into the viewer data.
+
+    Enables the frontend to draw the real tissue image and place spots at
+    ``coord * scalef`` in image-pixel space — the canonical Visium alignment,
+    which is what makes spots land ON the tissue rather than in a raw-coordinate
+    bounding box. No-op when no histology image is present.
+    """
+    spatial = adata.uns.get("spatial")
+    if not spatial:
+        return
+    for sample in spatial.values():
+        if not isinstance(sample, dict):
+            continue
+        images = sample.get("images", {}) or {}
+        sfs = sample.get("scalefactors", {}) or {}
+        for res_key, sf_key in (("hires", "tissue_hires_scalef"),
+                                 ("lowres", "tissue_lowres_scalef")):
+            if res_key not in images or sf_key not in sfs:
+                continue
+            import base64
+            import io
+
+            from PIL import Image
+
+            arr = np.asarray(images[res_key])
+            if arr.dtype != np.uint8:
+                a = arr.astype(float)
+                arr = (a / a.max() * 255).astype(np.uint8) if a.max() > 0 else a.astype(np.uint8)
+            img = Image.fromarray(arr)
+            scalef = float(sfs[sf_key])
+            w, h = img.size
+            shrink = min(1.0, max_dim / max(w, h))
+            if shrink < 1.0:
+                img = img.resize((max(1, int(w * shrink)), max(1, int(h * shrink))))
+                scalef *= shrink  # coord*scalef now maps into the resized image
+                w, h = img.size
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            spot_d = sfs.get("spot_diameter_fullres")
+            viewer_data["histology"] = {
+                "data_url": f"data:image/png;base64,{b64}",
+                "width": int(w),
+                "height": int(h),
+                "scalef": scalef,
+                "spot_diameter_fullres": float(spot_d) if spot_d else None,
+            }
+            return
+
+
 def generate_viewer_data(
     adata: ad.AnnData,
     method_labels: dict[str, np.ndarray],
@@ -468,6 +519,12 @@ def generate_viewer_data(
     if "tissue_mask_for_viewer" in adata.uns:
         viewer_data["tissue_mask"] = adata.uns["tissue_mask_for_viewer"]
         viewer_data["tissue_mask_scale_factor"] = adata.uns.get("tissue_mask_scale_factor")
+
+    # Embed the histology image so the viewer can draw it and align spots to it.
+    try:
+        _embed_histology(viewer_data, adata)
+    except Exception as e:  # pragma: no cover - defensive
+        viewer_data["histology_error"] = str(e)
 
     # Spots (coordinates + expression for hover)
     for i in range(adata.shape[0]):
