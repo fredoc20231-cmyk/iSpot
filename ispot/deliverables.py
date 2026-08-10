@@ -464,6 +464,11 @@ def generate_viewer_data(
         "methods": {},
     }
 
+    # Real tissue outline for the viewer (from image-based detection at load).
+    if "tissue_mask_for_viewer" in adata.uns:
+        viewer_data["tissue_mask"] = adata.uns["tissue_mask_for_viewer"]
+        viewer_data["tissue_mask_scale_factor"] = adata.uns.get("tissue_mask_scale_factor")
+
     # Spots (coordinates + expression for hover)
     for i in range(adata.shape[0]):
         spot = {
@@ -475,8 +480,20 @@ def generate_viewer_data(
             spot["ground_truth"] = str(adata.obs["ground_truth"].iloc[i])
         viewer_data["spots"].append(spot)
 
-    # Method labels
+    # Method labels. A method whose label count doesn't match the viewer's spot
+    # count is a real upstream misalignment (preprocessing dropped spots that
+    # the label array still counts). Record and skip it rather than silently
+    # truncating/padding (which would garble the rendered shape) or crashing the
+    # whole deliverable — consistent with the platform's partial-failure model.
+    n_spots = adata.shape[0]
+    viewer_data["excluded_methods"] = {}
     for method, labels in method_labels.items():
+        if len(labels) != n_spots:
+            viewer_data["excluded_methods"][method] = (
+                f"{len(labels)} labels vs {n_spots} viewer spots — spot-count "
+                f"mismatch between preprocessing and label generation"
+            )
+            continue
         viewer_data["methods"][method] = [str(l) for l in labels]
 
     # Save as JSON (may be large; consider chunking for very large datasets)

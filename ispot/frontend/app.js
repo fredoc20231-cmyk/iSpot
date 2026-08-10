@@ -531,6 +531,27 @@
     document.getElementById('viewer-section').classList.remove('hidden');
   }
 
+  function drawTissueMask(ctx, mask, scaleFactor) {
+    const origSpaceW = mask.original_width / scaleFactor;
+    const origSpaceH = mask.original_height / scaleFactor;
+    const cellW = origSpaceW / mask.width;
+    const cellH = origSpaceH / mask.height;
+    ctx.fillStyle = 'rgba(233, 237, 76, 0.10)';
+    for (let r = 0; r < mask.rows.length; r++) {
+      const row = mask.rows[r];
+      for (let c = 0; c < row.length; c++) {
+        if (row[c] !== '1') continue;
+        const origX = c * cellW;
+        const origY = r * cellH;
+        const x = (origX - state.viewerBounds.xMin) * state.viewerScale + state.viewerOffsetX;
+        const y = (origY - state.viewerBounds.yMin) * state.viewerScale + state.viewerOffsetY;
+        const w = Math.max(1, cellW * state.viewerScale);
+        const h = Math.max(1, cellH * state.viewerScale);
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+  }
+
   function drawViewer() {
     const ctx = state.viewerCtx;
     const canvas = state.viewerCanvas;
@@ -539,6 +560,10 @@
 
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (data.tissue_mask && data.tissue_mask_scale_factor) {
+      drawTissueMask(ctx, data.tissue_mask, data.tissue_mask_scale_factor);
+    }
 
     // Get labels for current method
     let labels;
