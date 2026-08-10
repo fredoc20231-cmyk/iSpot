@@ -1,0 +1,53 @@
+# Local multi-service topology for iSpot.
+#
+# Today the API runs benchmark jobs as in-process background tasks and persists
+# job status to SQLite (see ispot/jobstore.py), so `docker compose up api` is a
+# complete single-server deployment. The `redis` service and the commented
+# `worker` block below stake out the target for roadmap item 1 (Celery/Redis):
+# move job execution off the API process onto dedicated workers, with the
+# JobStore/broker as the shared state. Wiring the worker is a follow-up that
+# needs a live environment to validate end to end.
+
+services:
+  api:
+    build: .
+    ports:
+      - "8100:8100"
+    environment:
+      ISPOT_HOST: 0.0.0.0
+      ISPOT_PORT: "8100"
+      ISPOT_JOBS_DIR: /data/jobs
+      ISPOT_JOBS_BACKEND: sqlite
+      # Point the API at Redis once the Celery worker below is enabled:
+      # ISPOT_BROKER_URL: redis://redis:6379/0
+    volumes:
+      - ispot-jobs:/data/jobs
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ispot-redis:/data
+
+  # Follow-up (roadmap item 1): dedicated benchmark worker(s). Enabling this
+  # requires an ispot/worker.py Celery app and switching the API's dispatch
+  # from BackgroundTasks to enqueue-on-broker.
+  #
+  # worker:
+  #   build: .
+  #   command: celery -A ispot.worker worker --loglevel=info --concurrency=2
+  #   environment:
+  #     ISPOT_JOBS_DIR: /data/jobs
+  #     ISPOT_JOBS_BACKEND: sqlite
+  #     ISPOT_BROKER_URL: redis://redis:6379/0
+  #   volumes:
+  #     - ispot-jobs:/data/jobs
+  #   depends_on:
+  #     - redis
+
+volumes:
+  ispot-jobs:
+  ispot-redis:

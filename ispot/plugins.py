@@ -17,6 +17,8 @@ import inspect
 import os
 import sys
 import time
+import shutil
+import tempfile
 import traceback
 import numpy as np
 import pandas as pd
@@ -44,6 +46,7 @@ class PluginInfo:
     version: str = "0.1.0"
     source: str = "builtin"     # "builtin" | "local" | "pip" | "registry"
     package_name: str = ""
+    filepath: str = ""          # source file for local plugins (for sandboxing)
     run_func: Callable = field(default=None, repr=False)
 
 
@@ -190,6 +193,7 @@ def _load_plugin_file(filepath: str, source: str = "local"):
         for info in _PLUGIN_REGISTRY.values():
             if info.source == "builtin" and info.run_func.__module__ == full_name:
                 info.source = source
+                info.filepath = filepath
     except Exception as e:
         print(f"Warning: failed to load plugin '{filepath}': {e}")
         traceback.print_exc()
@@ -407,6 +411,68 @@ def run_plugin(info: PluginInfo, adata: ad.AnnData, n_clusters: int, seed: int =
 
     m["labels"] = labels
     m["embedding"] = result.get("embedding", None)
+    return m
+
+
+def run_plugin_sandboxed(
+    info: PluginInfo,
+    adata: ad.AnnData,
+    n_clusters: int,
+    seed: int = 42,
+    timeout: int | None = None,
+    memory_mb: int | None = None,
+) -> dict:
+    """Run a plugin in an isolated subprocess (see ispot.sandbox).
+
+    Same contract as :func:`run_plugin`, but the plugin executes in a separate
+    process with memory/CPU rlimits and a wall-clock timeout, so a misbehaving
+    community plugin cannot take down or read the memory of the API process.
+    The AnnData is serialized to a temp ``.h5ad`` the child reads. Timeout and
+    memory caps default to ISPOT_PLUGIN_TIMEOUT (600s) and ISPOT_PLUGIN_MEM_MB
+    (4096).
+    """
+    from ispot.sandbox import run_in_subprocess
+    from ispot.metrics import compute_metrics
+
+    if timeout is None:
+        timeout = int(float(os.environ.get("ISPOT_PLUGIN_TIMEOUT", "600")))
+    if memory_mb is None:
+        memory_mb = int(float(os.environ.get("ISPOT_PLUGIN_MEM_MB", "4096")))
+
+    tmpdir = tempfile.mkdtemp(prefix="ispot-plugin-")
+    adata_path = os.path.join(tmpdir, "input.h5ad")
+    try:
+        adata.write_h5ad(adata_path)
+        payload = {
+            "name": info.name,
+            "filepath": getattr(info, "filepath", "") or "",
+            "adata_path": adata_path,
+            "n_clusters": n_clusters,
+            "seed": seed,
+        }
+        res = run_in_subprocess(
+            "ispot.sandbox:_plugin_entry", payload,
+            timeout=timeout, memory_mb=memory_mb,
+        )
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    labels = np.array(res["labels"]).astype(str)
+    runtime = res.get("runtime")
+
+    if "has_ground_truth" in adata.obs and adata.obs["has_ground_truth"].any():
+        mask = adata.obs["has_ground_truth"].values.astype(bool)
+        gt = adata.obs.loc[mask, "ground_truth"].values
+        m = compute_metrics(gt, labels[mask], runtime)
+    else:
+        m = {
+            "ari": None, "macro_f1": None, "weighted_f1": None,
+            "runtime": float(runtime) if runtime is not None else None,
+            "n_spots": len(labels),
+            "n_clusters_pred": len(np.unique(labels)), "n_clusters_true": None,
+        }
+    m["labels"] = labels
+    m["embedding"] = res.get("embedding", None)
     return m
 
 

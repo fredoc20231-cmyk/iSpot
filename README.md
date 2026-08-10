@@ -41,8 +41,12 @@ Then open `http://localhost:8100` in your browser.
 | GET | `/api/jobs/{id}` | Get job status |
 | GET | `/api/jobs/{id}/results` | Get job results |
 | GET | `/api/jobs/{id}/download/{filename}` | Download deliverable |
-| POST | `/api/plugins/register` | Register a plugin method |
-| GET | `/api/meta-learning/recommend` | Get method recommendation |
+| GET | `/api/meta-learning/stats` | Meta-learning database stats |
+| GET | `/api/meta-learning/recommend` | Method recommendation (optional `?job_id=`) |
+| GET | `/api/plugins` | List registered methods/plugins |
+| POST | `/api/plugins/register` | Register a plugin (gated; see notes) |
+
+Mutating endpoints (`/api/upload`, `/api/benchmark`, `/api/plugins/register`) require the `X-API-Key` header when `ISPOT_API_KEY` is set.
 
 ## Project Structure
 
@@ -50,7 +54,7 @@ Then open `http://localhost:8100` in your browser.
 iSpot/
 ├── ispot/
 │   ├── __init__.py
-│   ├── api.py                      # FastAPI backend (16 routes)
+│   ├── api.py                      # FastAPI backend (9 API routes + static)
 │   ├── deliverables.py             # Ranking CSV, figures, viewer JSON, PDF report
 │   ├── meta_learning.py            # Meta-learning engine (thread-safe SQLite)
 │   ├── multiplatform_loaders.py    # Loaders for 7 ST platforms
@@ -106,11 +110,28 @@ iSpot/
 |----------|---------|-------------|
 | `ISPOT_HOST` | `0.0.0.0` | Server bind address |
 | `ISPOT_PORT` | `8100` | Server port |
+| `ISPOT_JOBS_DIR` | `<repo>/ispot_jobs` | Directory for job storage (uploads, results, DB) |
+| `ISPOT_JOBS_BACKEND` | `sqlite` | Job store backend: `sqlite` (persists across restarts) or `memory` |
+| `ISPOT_SEED_CSV` | `<repo>/data/unified_results.csv` | Meta-learning seed data |
+| `ISPOT_MAX_UPLOAD_MB` | `500` | Maximum upload size (rejected with HTTP 413 above this) |
+| `ISPOT_MAX_SPOTS` | `500000` | Maximum spots per dataset (rejected before dispatch) |
+| `ISPOT_ALLOWED_ORIGINS` | `http://localhost:8100,http://127.0.0.1:8100` | Comma-separated CORS origins (no wildcard with credentials) |
+| `ISPOT_JOB_TTL_DAYS` | `7` | Retention window for uploaded-but-never-completed jobs |
+| `ISPOT_API_KEY` | _(unset)_ | If set, mutating endpoints require this key via `X-API-Key` |
+| `ISPOT_ENABLE_PLUGIN_REGISTER` | _(unset)_ | Set to `1` to allow `POST /api/plugins/register` (executes plugin code) |
+| `ISPOT_PLUGIN_TIMEOUT` / `ISPOT_PLUGIN_MEM_MB` | `600` / `4096` | Sandbox caps for plugin execution |
 
 ## Notes
 
 - R-based methods (BayesSpace) require R + Bioconductor packages installed
 - Meta-learning DB is auto-seeded from `data/unified_results.csv` on first startup
-- Job files are stored in `ispot_jobs/` (created automatically)
+- Job files are stored under `ISPOT_JOBS_DIR` (defaults to `ispot_jobs/`, created automatically)
+- Job status is persisted (SQLite by default) so it survives an API restart; `docker-compose.yml` sketches the multi-service (API + Redis + worker) target
+- A job reports `completed_partial` when some methods fail but others succeed; `failed` only when every method fails. Per-method errors are in the job's `method_summary`.
+- Uploads must be `.h5ad`, `.h5`, or `.csv` and stay within the size/spot-count limits above
+- Downloads are constrained to a job's own `results/` directory (path-traversal attempts are rejected)
+- Uploaded-but-never-completed jobs are cleaned up after `ISPOT_JOB_TTL_DAYS` (on startup)
+- **Plugin security:** `plugins.run_plugin_sandboxed()` runs a plugin in an isolated subprocess with memory/CPU rlimits and a wall-clock timeout (`ISPOT_PLUGIN_TIMEOUT`, `ISPOT_PLUGIN_MEM_MB`), so a misbehaving plugin can't crash or read the API process. Network isolation still requires running the API/worker inside a locked-down container (no egress, read-only FS) — do that before executing untrusted plugins in a multi-tenant deployment.
 - No-GT scores are proxy metrics, not ground truth — this is stated in every report
+- The PDF report includes a pairwise statistical comparison (Wilcoxon signed-rank + Cliff's delta, Holm–Bonferroni corrected) when ground truth and multiple seeds are available
 - Cluster count estimation uses knee detection; typically within ±2 of true count

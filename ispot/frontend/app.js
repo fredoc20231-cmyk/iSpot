@@ -221,9 +221,14 @@
     try {
       const job = await apiGet(`/jobs/${state.jobId}`);
       updateProgress(job);
-      if (job.status === 'completed') {
+      if (job.status === 'completed' || job.status === 'completed_partial') {
         stopPolling();
-        showAlert('Benchmark completed! Loading results...', 'success');
+        if (job.status === 'completed_partial') {
+          const nFailed = (job.method_summary && job.method_summary.n_failed) || 0;
+          showAlert(`Benchmark completed with ${nFailed} failed method(s). Loading partial results…`, 'warning');
+        } else {
+          showAlert('Benchmark completed! Loading results...', 'success');
+        }
         await loadResults();
       } else if (job.status === 'failed') {
         stopPolling();
@@ -269,10 +274,38 @@
     }
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderMethodSummary(summary) {
+    const el = document.getElementById('results-warnings');
+    if (!el) return;
+    if (!summary || !summary.failed_methods || summary.failed_methods.length === 0) {
+      el.innerHTML = '';
+      return;
+    }
+    const items = summary.failed_methods
+      .map(f => `<li><strong>${escapeHtml(f.method)}</strong>: <code>${escapeHtml(f.error)}</code></li>`)
+      .join('');
+    el.innerHTML =
+      `<div class="alert alert-warning">` +
+      `${summary.n_succeeded} method(s) succeeded, ${summary.n_failed} failed. ` +
+      `Rankings below cover the methods that completed.` +
+      `<ul class="method-fail-list">${items}</ul>` +
+      `</div>`;
+  }
+
   function renderResults(results) {
     document.getElementById('results-has-gt').textContent = results.has_ground_truth ? 'Yes' : 'No';
     document.getElementById('results-n-clusters').textContent = results.n_clusters;
     document.getElementById('results-job-id').textContent = results.job_id;
+
+    renderMethodSummary(results.method_summary);
 
     // Download links
     const linksDiv = document.getElementById('download-links');

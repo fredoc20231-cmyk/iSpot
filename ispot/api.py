@@ -29,13 +29,19 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Request
+from fastapi import (
+    FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Request,
+    Header, Depends,
+)
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Ensure ispot is importable
-sys.path.insert(0, "/workspace")
+# Ensure the repo root (which contains the ``ispot`` package) is importable,
+# regardless of where the server is launched from.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from ispot.multiplatform_loaders import load_data, auto_detect_platform, LOADER_REGISTRY
 from ispot.profiling import profile_data, DataFeatureVector
@@ -46,7 +52,7 @@ from ispot.registry import (
     get_runner, is_stochastic, is_r_based,
 )
 from ispot.metrics import compute_metrics
-from ispot.nogt_scoring import compute_nogt_score, DEFAULT_WEIGHTS
+from ispot.nogt_scoring import compute_nogt_score, consensus_clustering, DEFAULT_WEIGHTS
 from ispot.meta_learning import (
     MetaLearningDB, MetaLearningModel, seed_from_existing_results,
     pilot_then_full, evaluate_pilot_alignment,
@@ -55,24 +61,42 @@ from ispot.deliverables import (
     generate_ranking_table, generate_figures,
     generate_viewer_data, generate_report,
 )
-from ispot.plugins import discover_plugins, get_all_method_names
+from ispot.plugins import (
+    discover_plugins, get_all_method_names, list_plugins, get_plugin,
+    validate_plugin, _load_plugin_file, _PLUGIN_REGISTRY,
+)
+from ispot import auth
+from ispot.job_status import classify_job_status
+from ispot.stats_compare import build_comparison_table
+from ispot.jobstore import create_job_store
+from ispot.cleanup import cleanup_expired_jobs
+from ispot import validation
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-WORKSPACE_DIR = Path("/workspace/ispot_jobs")
-WORKSPACE_DIR.mkdir(exist_ok=True)
+# Job storage directory. Defaults to <repo>/ispot_jobs; override with
+# ISPOT_JOBS_DIR (e.g. a mounted volume in production).
+WORKSPACE_DIR = Path(os.environ.get("ISPOT_JOBS_DIR", REPO_ROOT / "ispot_jobs"))
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Meta-learning database (persistent across restarts)
 DB_PATH = str(WORKSPACE_DIR / "meta_learning.db")
+
+# Persistent job store so job status survives an API restart/crash. Backend is
+# selectable via ISPOT_JOBS_BACKEND (sqlite default, or memory).
+job_store = create_job_store(str(WORKSPACE_DIR / "jobs.db"))
+
+# Seed data shipped with the repo; override with ISPOT_SEED_CSV.
+SEED_CSV = os.environ.get("ISPOT_SEED_CSV", str(REPO_ROOT / "data" / "unified_results.csv"))
 
 # Initialize meta-learning
 ml_db = MetaLearningDB(DB_PATH)
 # Seed from existing results if database is empty
 if ml_db.count_runs() == 0:
-    n = seed_from_existing_results(ml_db, "/mnt/results/unified_results.csv")
-    print(f"Seeded meta-learning DB with {n} records")
+    n = seed_from_existing_results(ml_db, SEED_CSV)
+    print(f"Seeded meta-learning DB with {n} records from {SEED_CSV}")
 
 ml_model = MetaLearningModel(min_samples_per_method=3, alpha=1.0)
 ml_model.train(ml_db)
@@ -91,9 +115,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Restrict CORS to explicit origins. Wildcard "*" with allow_credentials=True
+# is rejected by browsers and defeats CORS, so origins come from
+# ISPOT_ALLOWED_ORIGINS (comma-separated), defaulting to localhost.
+_origins_env = os.environ.get("ISPOT_ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] or [
+    "http://localhost:8100",
+    "http://127.0.0.1:8100",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production: restrict to frontend domain
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,6 +134,13 @@ app.add_middleware(
 
 # Serve frontend static files
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+
+
+async def require_api_key(x_api_key: Optional[str] = Header(default=None)):
+    """Auth dependency: enforce X-API-Key when ISPOT_API_KEY is configured."""
+    if not auth.is_authorized(auth.get_configured_key(), x_api_key):
+        raise HTTPException(status_code=401, detail="Missing or invalid API key.")
+    return True
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -145,9 +185,14 @@ class BenchmarkRequest(BaseModel):
     no_gt_weights: dict | None = None
 
 
+class PluginRegisterRequest(BaseModel):
+    filepath: str | None = None   # server-side path to a plugin .py
+    package: str | None = None    # installed pip package exposing an entry point
+
+
 class JobStatus(BaseModel):
     job_id: str
-    status: str  # "queued", "running", "completed", "failed"
+    status: str  # "queued", "running", "completed", "completed_partial", "failed"
     progress: float  # 0.0 to 1.0
     message: str
     created_at: str
@@ -159,6 +204,26 @@ class JobStatus(BaseModel):
 # ---------------------------------------------------------------------------
 
 jobs: dict[str, dict] = {}
+
+# Restore any jobs persisted by a previous process so they survive restarts.
+try:
+    for _j in job_store.all():
+        jobs[_j["job_id"]] = _j
+    if jobs:
+        print(f"Restored {len(jobs)} job(s) from the job store")
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"Could not restore jobs from store: {_e}")
+
+
+def save_job(job_id: str) -> None:
+    """Write-through the current in-memory job state to the persistent store."""
+    job = jobs.get(job_id)
+    if job is None:
+        return
+    try:
+        job_store.save(job)
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"Failed to persist job {job_id}: {e}")
 
 
 def get_job_dir(job_id: str) -> Path:
@@ -232,6 +297,7 @@ async def upload_data(
     platform: str | None = Form(None),
     sample_id: str | None = Form(None),
     ground_truth_col: str | None = Form(None),
+    _auth: bool = Depends(require_api_key),
 ):
     """Upload spatial transcriptomics data.
 
@@ -241,14 +307,23 @@ async def upload_data(
     The file is stored temporarily and deleted after the benchmark completes
     (or after 7 days, whichever comes first).
     """
+    # Reject unsupported file types before creating any job state.
+    try:
+        validation.validate_extension(file.filename)
+    except validation.ValidationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
     job_id = str(uuid.uuid4())[:12]
     job_dir = get_job_dir(job_id)
     job_dir.mkdir(exist_ok=True)
 
-    # Save uploaded file
+    # Save uploaded file, enforcing the configured size cap while streaming.
     file_path = job_dir / file.filename
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    try:
+        file_size = validation.stream_to_file(file.file, str(file_path))
+    except validation.ValidationError as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
     # Auto-detect platform if not specified
     if platform is None:
@@ -266,12 +341,13 @@ async def upload_data(
         "sample_id": sample_id,
         "ground_truth_col": ground_truth_col,
     }
+    save_job(job_id)
 
     return {
         "job_id": job_id,
         "platform": platform,
         "filename": file.filename,
-        "file_size": os.path.getsize(file_path),
+        "file_size": file_size,
         "message": "Upload successful. Use POST /api/benchmark to start analysis.",
     }
 
@@ -280,6 +356,7 @@ async def upload_data(
 async def start_benchmark(
     request: BenchmarkRequest,
     background_tasks: BackgroundTasks,
+    _auth: bool = Depends(require_api_key),
 ):
     """Start a benchmark job.
 
@@ -294,6 +371,7 @@ async def start_benchmark(
     job["status"] = "queued"
     job["progress"] = 0.0
     job["message"] = "Benchmark queued"
+    save_job(job_id)
 
     # Add to background tasks
     background_tasks.add_task(
@@ -326,7 +404,7 @@ async def get_job_results(job_id: str):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
 
     job = jobs[job_id]
-    if job["status"] != "completed":
+    if job["status"] not in ("completed", "completed_partial"):
         raise HTTPException(status_code=400, detail=f"Job not completed. Status: {job['status']}")
 
     job_dir = get_job_dir(job_id)
@@ -342,17 +420,22 @@ async def get_job_results(job_id: str):
         "n_clusters": job.get("n_clusters", None),
         "has_ground_truth": job.get("has_ground_truth", False),
         "meta_learning": job.get("meta_learning", {}),
+        "status": job["status"],
+        "method_summary": job.get("method_summary", {}),
     })
 
 
 @app.get("/api/jobs/{job_id}/download/{filename}")
 async def download_result(job_id: str, filename: str):
     """Download a specific result file."""
-    job_dir = get_job_dir(job_id)
-    file_path = job_dir / "results" / filename
-    if not file_path.exists():
+    results_dir = get_job_dir(job_id) / "results"
+    try:
+        file_path = validation.safe_child_path(str(results_dir), filename)
+    except validation.ValidationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File {filename} not found.")
-    return FileResponse(str(file_path))
+    return FileResponse(file_path)
 
 
 @app.get("/api/meta-learning/stats")
@@ -372,6 +455,83 @@ async def meta_learning_stats():
         "platforms": df["platform"].value_counts().to_dict() if len(df) > 0 else {},
         "cv_r2": cv_r2_sanitized,
     }
+
+
+@app.get("/api/meta-learning/recommend")
+async def meta_learning_recommend(job_id: str | None = None):
+    """Recommend methods for a dataset from the meta-learning model.
+
+    If ``job_id`` is given and that job has been profiled, the recommendation
+    is conditioned on its data features; otherwise a general (cold-start /
+    low-confidence) ranking is returned.
+    """
+    features: dict = {}
+    if job_id and job_id in jobs:
+        features = jobs[job_id].get("data_profile", {}) or {}
+    result = ml_model.predict(features)
+    return _sanitize_json({"based_on_job": job_id, "recommendation": result})
+
+
+@app.get("/api/plugins")
+async def list_registered_plugins():
+    """List all registered methods/plugins and their metadata."""
+    out = {}
+    for name, info in list_plugins().items():
+        out[name] = {
+            "category": info.category,
+            "compute_tier": info.compute_tier,
+            "source": info.source,
+            "is_stochastic": info.is_stochastic,
+            "is_r_based": info.is_r_based,
+            "description": info.description,
+            "author": info.author,
+            "version": info.version,
+        }
+    return {"plugins": out, "count": len(out)}
+
+
+@app.post("/api/plugins/register")
+async def register_plugin(
+    request: PluginRegisterRequest,
+    _auth: bool = Depends(require_api_key),
+):
+    """Register a community plugin from a server-side file or pip package.
+
+    Disabled unless ISPOT_ENABLE_PLUGIN_REGISTER=1, because loading a plugin
+    executes its code in this process. For untrusted plugins, run execution
+    through ispot.plugins.run_plugin_sandboxed and host the API in a
+    locked-down container. Uploaded plugin *files* are intentionally not
+    accepted over HTTP.
+    """
+    if os.environ.get("ISPOT_ENABLE_PLUGIN_REGISTER", "").strip() not in ("1", "true", "True"):
+        raise HTTPException(
+            status_code=403,
+            detail="Plugin registration is disabled. Set ISPOT_ENABLE_PLUGIN_REGISTER=1 to enable.",
+        )
+    if not request.filepath and not request.package:
+        raise HTTPException(status_code=400, detail="Provide 'filepath' or 'package'.")
+
+    before = set(_PLUGIN_REGISTRY.keys())
+    if request.filepath:
+        if not os.path.exists(request.filepath):
+            raise HTTPException(status_code=404, detail=f"File not found: {request.filepath}")
+        _load_plugin_file(request.filepath, source="local")
+    else:
+        discover_plugins()  # picks up pip entry points
+
+    new_names = sorted(set(_PLUGIN_REGISTRY.keys()) - before)
+    if not new_names:
+        raise HTTPException(status_code=400, detail="No new plugin registered from the source.")
+
+    # Validate each newly registered plugin against a synthetic dataset.
+    validations = {}
+    for name in new_names:
+        try:
+            validations[name] = validate_plugin(get_plugin(name))
+        except Exception as e:  # pragma: no cover - defensive
+            validations[name] = {"valid": False, "error": str(e)}
+
+    return _sanitize_json({"registered": new_names, "validation": validations})
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +559,7 @@ def run_benchmark_task(
         job["status"] = "running"
         job["message"] = "Loading data..."
         job["progress"] = 0.05
+        save_job(job_id)
 
         adata = load_data(
             job["file_path"],
@@ -413,6 +574,17 @@ def run_benchmark_task(
 
         features = profile_data(adata, platform=platform)
         job["data_profile"] = features.to_dict()
+
+        # Resource guard: reject datasets larger than the configured cap before
+        # dispatching any compute-heavy method.
+        try:
+            validation.validate_spot_count(getattr(features, "n_spots", None))
+        except validation.ValidationError as e:
+            job["status"] = "failed"
+            job["message"] = e.message
+            job["progress"] = 1.0
+            save_job(job_id)
+            return
 
         has_gt = adata.obs["has_ground_truth"].any()
         job["has_ground_truth"] = has_gt
@@ -530,6 +702,17 @@ def run_benchmark_task(
 
         results_df = pd.DataFrame(all_results)
 
+        # Classify the outcome: a job is only "failed" if EVERY method failed.
+        # Partial success still yields usable rankings for the methods that ran.
+        summary = classify_job_status(all_results)
+        job["method_summary"] = summary
+        if summary["status"] == "failed":
+            job["status"] = "failed"
+            job["progress"] = 1.0
+            job["message"] = "All methods failed; no results to report."
+            save_job(job_id)
+            return
+
         # --- Step 7: Compute no-GT scores if needed ---
         if not has_gt and method_labels:
             job["message"] = "Computing no-GT scores..."
@@ -538,6 +721,15 @@ def run_benchmark_task(
             weights = no_gt_weights or DEFAULT_WEIGHTS
             coords = np.array(adata_for_est.obsm["spatial"])
             X_pca = adata_for_est.obsm["X_pca"]
+
+            # The consensus depends only on the full set of method labels and
+            # n_clusters, so compute it once here rather than re-running the
+            # spectral clustering inside compute_nogt_score for every method.
+            try:
+                consensus_labels = consensus_clustering(method_labels, n_clusters)
+            except Exception as e:
+                print(f"Consensus clustering failed, CAS will fall back per-method: {e}")
+                consensus_labels = None
 
             nogt_results = []
             for method in method_labels:
@@ -552,6 +744,7 @@ def run_benchmark_task(
                     all_method_labels=method_labels,
                     n_clusters=n_clusters,
                     weights=weights,
+                    consensus_labels=consensus_labels,
                 )
 
                 # Update results with no-GT scores
@@ -588,7 +781,7 @@ def run_benchmark_task(
             ml_db.record_run(record)
 
         # Retrain model if enough new data
-        if ml_db.count_runs() % 50 == 0:
+        if ml_db.count_runs() - ml_model.last_trained_count >= 50:
             ml_model.train(ml_db)
 
         # --- Step 9: Generate deliverables ---
@@ -597,6 +790,25 @@ def run_benchmark_task(
 
         # Save raw results
         results_df.to_csv(results_dir / "raw_results.csv", index=False)
+
+        # Pairwise statistical comparison (PLAN 1.5.3). Meaningful only with
+        # ground truth and repeated seeds, where per-seed ARI gives paired
+        # samples; skipped otherwise.
+        statistical_results = None
+        if has_gt:
+            score_map: dict[str, dict[int, float]] = {}
+            for _, row in results_df.iterrows():
+                if row.get("error") is not None:
+                    continue
+                ari = row.get("ari")
+                if ari is None or pd.isna(ari):
+                    continue
+                score_map.setdefault(row["method"], {})[int(row.get("seed", 42))] = float(ari)
+            try:
+                statistical_results = build_comparison_table(score_map, metric_name="ari")
+            except Exception as e:
+                print(f"Statistical comparison skipped: {e}")
+                statistical_results = None
 
         # Ranking table
         ranking_path = generate_ranking_table(
@@ -625,13 +837,21 @@ def run_benchmark_task(
             data_profile=features.to_dict(),
             n_clusters=n_clusters,
             output_path=str(results_dir / "benchmark_report.pdf"),
+            statistical_results=statistical_results,
         )
 
         # --- Step 10: Complete ---
-        job["status"] = "completed"
+        job["status"] = summary["status"]  # "completed" or "completed_partial"
         job["progress"] = 1.0
-        job["message"] = "Benchmark completed successfully"
+        if summary["status"] == "completed_partial":
+            failed_names = ", ".join(m["method"] for m in summary["failed_methods"])
+            job["message"] = (
+                f"Completed with {summary['n_failed']} failed method(s): {failed_names}"
+            )
+        else:
+            job["message"] = "Benchmark completed successfully"
         job["completed_at"] = datetime.now().isoformat()
+        save_job(job_id)
 
         # Clean up uploaded file (keep results)
         try:
@@ -643,6 +863,7 @@ def run_benchmark_task(
         job["status"] = "failed"
         job["message"] = f"Error: {str(e)}"
         job["progress"] = 1.0
+        save_job(job_id)
         traceback.print_exc()
 
 
@@ -658,3 +879,16 @@ async def startup_event():
     print(f"  Meta-learning runs: {ml_db.count_runs()}")
     print(f"  Platforms: {list(LOADER_REGISTRY.keys())}")
     print(f"  Job workspace: {WORKSPACE_DIR}\n")
+
+    # Retention: drop directories for jobs that never completed and are older
+    # than the configured window (ISPOT_JOB_TTL_DAYS, default 7).
+    try:
+        ttl_days = int(float(os.environ.get("ISPOT_JOB_TTL_DAYS", "7")))
+        removed = cleanup_expired_jobs(jobs, str(WORKSPACE_DIR), max_age_days=ttl_days)
+        for jid in removed:
+            jobs.pop(jid, None)
+            job_store.delete(jid)
+        if removed:
+            print(f"  Cleaned up {len(removed)} expired job(s)")
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"  Job cleanup skipped: {e}")
