@@ -135,9 +135,26 @@ class BaseLoader:
             adata.obs["ground_truth"] = None
             adata.obs["has_ground_truth"] = False
 
-        # Set in_tissue (default: all in tissue)
+        # Set in_tissue (default: all in tissue) and, critically, actually
+        # FILTER on it. Previously this column was read and preserved but never
+        # used, so a raw/unfiltered Visium export (or any dataset with real
+        # off-tissue background spots marked in_tissue=0) carried every
+        # background spot straight into clustering and the viewer — dots
+        # scattered across the whole rectangular capture array instead of the
+        # actual tissue footprint.
         if "in_tissue" not in adata.obs.columns:
             adata.obs["in_tissue"] = 1
+        else:
+            in_tissue_vals = (
+                pd.to_numeric(adata.obs["in_tissue"], errors="coerce")
+                .fillna(1).astype(int)
+            )
+            n_off_tissue = int((in_tissue_vals == 0).sum())
+            if n_off_tissue > 0:
+                n_before = adata.shape[0]
+                adata = adata[in_tissue_vals.values == 1].copy()
+                adata.uns["n_spots_excluded_off_tissue"] = n_off_tissue
+                adata.uns["n_spots_before_tissue_filter"] = int(n_before)
 
         # Image-based tissue detection: if a histology image is available,
         # exclude off-tissue capture spots and record the real tissue outline
