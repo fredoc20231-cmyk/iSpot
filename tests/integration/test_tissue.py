@@ -160,6 +160,31 @@ def test_viewer_data_includes_mask(tmp_path):
     assert "good" in data["methods"]
 
 
+def test_viewer_data_embeds_histology(tmp_path):
+    # Viewer JSON carries a base64 histology image + scalefactor so the
+    # frontend can align spots to the tissue (fixes dots-outside-tissue).
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from ispot.deliverables import generate_viewer_data
+
+    n = 12
+    adata = ad.AnnData(np.ones((n, 4), dtype="float32"))
+    adata.obsm["spatial"] = np.random.default_rng(0).random((n, 2)) * 100
+    img = np.full((60, 80, 3), 200, dtype=np.uint8)
+    adata.uns["spatial"] = {
+        "s": {"images": {"hires": img},
+              "scalefactors": {"tissue_hires_scalef": 0.5, "spot_diameter_fullres": 20}}
+    }
+    path = generate_viewer_data(
+        adata, {"m": np.array(["0"] * n)}, has_ground_truth=False, output_dir=str(tmp_path)
+    )
+    data = json.load(open(path))
+    h = data.get("histology")
+    assert h and h["data_url"].startswith("data:image/png;base64,")
+    assert h["width"] == 80 and h["height"] == 60
+    assert h["scalef"] == 0.5 and h["spot_diameter_fullres"] == 20
+
+
 def test_viewer_data_raises_on_spot_count_mismatch(tmp_path):
     # Task 4 / checklist #5: a length mismatch is a loud, traceable error.
     pytest.importorskip("matplotlib")
