@@ -35,6 +35,7 @@ Then open `http://localhost:8100` in your browser.
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
 | GET | `/api/methods` | List available methods |
+| GET | `/api/methods/availability` | Which methods can actually run here (+ why not) |
 | GET | `/api/platforms` | List supported platforms |
 | POST | `/api/upload` | Upload ST data (.h5ad, .h5, .csv) |
 | POST | `/api/benchmark` | Start benchmark job |
@@ -117,6 +118,7 @@ iSpot/
 | `ISPOT_MAX_SPOTS` | `500000` | Maximum spots per dataset (rejected before dispatch) |
 | `ISPOT_ALLOWED_ORIGINS` | `http://localhost:8100,http://127.0.0.1:8100` | Comma-separated CORS origins (no wildcard with credentials) |
 | `ISPOT_JOB_TTL_DAYS` | `7` | Retention window for uploaded-but-never-completed jobs |
+| `ISPOT_BETA_METHODS` | _(unset)_ | Comma-separated allowlist of methods for a default benchmark; otherwise only methods whose backends are installed run |
 | `ISPOT_API_KEY` | _(unset)_ | If set, mutating endpoints require this key via `X-API-Key` |
 | `ISPOT_ENABLE_PLUGIN_REGISTER` | _(unset)_ | Set to `1` to allow `POST /api/plugins/register` (executes plugin code) |
 | `ISPOT_PLUGIN_TIMEOUT` / `ISPOT_PLUGIN_MEM_MB` | `600` / `4096` | Sandbox caps for plugin execution |

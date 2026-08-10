@@ -25,6 +25,16 @@ def test_api_boots_and_serves_read_endpoints():
         assert client.get("/api/meta-learning/recommend").status_code == 200
         assert client.get("/api/plugins").status_code == 200
 
+        # Availability matrix reflects the real environment: Leiden runs
+        # (scanpy installed), torch-backed methods do not (torch absent here).
+        r = client.get("/api/methods/availability")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["availability"]["Leiden_PCA"]["available"] is True
+        assert "Leiden_PCA" in body["runnable"]
+        assert body["availability"]["GraphST"]["available"] is False
+        assert body["default_methods"]  # non-empty (at least Leiden_PCA)
+
 
 def test_api_key_gate(monkeypatch):
     monkeypatch.setenv("ISPOT_API_KEY", "secret")

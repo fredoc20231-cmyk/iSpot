@@ -66,6 +66,7 @@ from ispot.plugins import (
     validate_plugin, _load_plugin_file, _PLUGIN_REGISTRY,
 )
 from ispot import auth
+from ispot.method_availability import availability_matrix, available_methods
 from ispot.job_status import classify_job_status
 from ispot.stats_compare import build_comparison_table
 from ispot.jobstore import create_job_store
@@ -104,6 +105,23 @@ ml_model.train(ml_db)
 # Discover all available methods (built-in + plugins)
 discover_plugins()
 AVAILABLE_METHODS = list(METHOD_DISPLAY.keys())
+
+
+def default_methods() -> list[str]:
+    """Methods to run when the caller doesn't specify any.
+
+    Honors ISPOT_BETA_METHODS (comma-separated allowlist) if set; otherwise
+    uses the methods whose backends are actually installed, so a default
+    benchmark doesn't attempt (and error on) unavailable methods. Always
+    falls back to Leiden_PCA, which needs only scanpy.
+    """
+    env = os.environ.get("ISPOT_BETA_METHODS", "").strip()
+    if env:
+        picked = [m.strip() for m in env.split(",") if m.strip() in AVAILABLE_METHODS]
+        if picked:
+            return picked
+    runnable = available_methods(AVAILABLE_METHODS)
+    return runnable or ["Leiden_PCA"]
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -283,6 +301,24 @@ async def list_methods():
             "is_r_based": is_r_based(method),
         })
     return {"methods": methods}
+
+
+@app.get("/api/methods/availability")
+async def methods_availability():
+    """Report which methods can actually run in this environment.
+
+    Each entry: {available: bool, reason: str, requirements: {...}}. Methods
+    whose backends (torch/tensorflow/R/model dirs) are missing are reported
+    unavailable with the reason, so the UI can show why and the default
+    benchmark can skip them.
+    """
+    matrix = availability_matrix(AVAILABLE_METHODS)
+    runnable = [m for m, info in matrix.items() if info["available"]]
+    return {
+        "availability": matrix,
+        "runnable": runnable,
+        "default_methods": default_methods(),
+    }
 
 
 @app.get("/api/platforms")
@@ -630,7 +666,7 @@ def run_benchmark_task(
                 methods = decision["pilot_methods"]
         else:
             if methods is None:
-                methods = AVAILABLE_METHODS
+                methods = default_methods()
 
         # --- Step 6: Run methods ---
         all_results = []
