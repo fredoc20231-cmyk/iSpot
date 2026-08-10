@@ -38,33 +38,43 @@ def test_otsu_recovers_irregular_shape():
     assert inter / union > 0.95
 
 
-def test_detection_filters_off_tissue_spots():
-    # Task 3: full capture grid, tissue only on the left half -> right-half
-    # spots are excluded, with precision & recall = 1.0.
-    from ispot.multiplatform_loaders import _apply_image_based_tissue_detection
-
-    n_side, hires, fullres = 20, 200, 1000
+def _make_half_tissue_adata(n_side=20, hires=200, fullres=1000):
     scalef = hires / fullres
     xs = np.linspace(50, fullres - 50, n_side)
     ys = np.linspace(50, fullres - 50, n_side)
     coords = np.array([(x, y) for y in ys for x in xs], dtype=float)  # col=x, row=y
     n = coords.shape[0]
-
     img = np.full((hires, hires, 3), 240, dtype=np.uint8)
     img[:, : hires // 2] = 30  # left half is tissue
-
     adata = ad.AnnData(np.ones((n, 5), dtype="float32"))
     adata.obsm["spatial"] = coords
     adata.uns["spatial"] = {
         "s": {"images": {"hires": img}, "scalefactors": {"tissue_hires_scalef": scalef}}
     }
+    return adata, coords
 
+
+def test_image_detection_does_not_filter_by_default():
+    # By default image-based detection must NOT drop spots (avoids removing
+    # real tissue / keeping border spots); the histology image is drawn instead.
+    from ispot.multiplatform_loaders import _apply_image_based_tissue_detection
+
+    adata, coords = _make_half_tissue_adata()
+    out = _apply_image_based_tissue_detection(adata)
+    assert out.n_obs == coords.shape[0]  # nothing dropped
+    assert "n_spots_excluded_by_image_tissue_detection" not in out.uns
+
+
+def test_image_detection_filters_when_opted_in(monkeypatch):
+    # With ISPOT_IMAGE_TISSUE_FILTER=1 it filters to the detected tissue half.
+    monkeypatch.setenv("ISPOT_IMAGE_TISSUE_FILTER", "1")
+    from ispot.multiplatform_loaders import _apply_image_based_tissue_detection
+
+    adata, coords = _make_half_tissue_adata()
     out = _apply_image_based_tissue_detection(adata)
     expected = coords[:, 0] < 500  # x*scalef < 100  <=>  x < 500
     assert out.n_obs == int(expected.sum())
     assert out.uns.get("n_spots_excluded_by_image_tissue_detection") == int((~expected).sum())
-    assert "tissue_mask_for_viewer" in out.uns
-    # every surviving spot is genuinely left-of-center (precision = recall = 1)
     assert bool(np.all(np.asarray(out.obsm["spatial"])[:, 0] < 500))
 
 
@@ -151,9 +161,8 @@ def test_space_ranger_bundle_hires_only(tmp_path):
     assert "spatial" in adata.obsm
     spatial_uns = adata.uns.get("spatial", {})
     assert spatial_uns and any("hires" in v.get("images", {}) for v in spatial_uns.values())
-    # all spots were on the left/tissue side -> none excluded
-    assert adata.uns.get("n_spots_excluded_by_image_tissue_detection", 0) == 0
-    assert "tissue_mask_for_viewer" in adata.uns
+    # Default behavior no longer drops spots via image heuristic.
+    assert "n_spots_excluded_by_image_tissue_detection" not in adata.uns
 
 
 def test_viewer_data_includes_mask(tmp_path):

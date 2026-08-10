@@ -119,6 +119,7 @@ iSpot/
 | `ISPOT_ALLOWED_ORIGINS` | `http://localhost:8100,http://127.0.0.1:8100` | Comma-separated CORS origins (no wildcard with credentials) |
 | `ISPOT_JOB_TTL_DAYS` | `7` | Retention window for uploaded-but-never-completed jobs |
 | `ISPOT_BETA_METHODS` | _(unset)_ | Comma-separated allowlist of methods for a default benchmark; otherwise only methods whose backends are installed run |
+| `ISPOT_IMAGE_TISSUE_FILTER` | _(unset)_ | Set to `1` to hard-filter spots by image-derived tissue detection; off by default (relies on `in_tissue` + draws the histology image) |
 | `ISPOT_API_KEY` | _(unset)_ | If set, mutating endpoints require this key via `X-API-Key` |
 | `ISPOT_ENABLE_PLUGIN_REGISTER` | _(unset)_ | Set to `1` to allow `POST /api/plugins/register` (executes plugin code) |
 | `ISPOT_PLUGIN_TIMEOUT` / `ISPOT_PLUGIN_MEM_MB` | `600` / `4096` | Sandbox caps for plugin execution |
