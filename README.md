@@ -1,6 +1,6 @@
 # iSpot: Spatial Transcriptomics Clustering Benchmark Platform
 
-A hosted SaaS platform for benchmarking spatial transcriptomics clustering methods. Upload ST data, benchmark multiple clustering methods, and get a ranked recommendation with interactive visualizations and a written report.
+A hosted platform for benchmarking spatial transcriptomics clustering methods. Upload ST data, benchmark multiple clustering methods, and get a ranked recommendation with interactive visualizations and a written report.
 
 ## Quick Start
 
