@@ -68,6 +68,24 @@ def test_detection_filters_off_tissue_spots():
     assert bool(np.all(np.asarray(out.obsm["spatial"])[:, 0] < 500))
 
 
+def test_in_tissue_column_filters_background_spots(tmp_path):
+    # A dataset carrying real off-tissue spots (in_tissue=0) and NO histology
+    # image must still have those background spots filtered at load, so the
+    # viewer shows only the tissue footprint.
+    from ispot.multiplatform_loaders import VisiumLoader
+
+    n = 20
+    adata = ad.AnnData(np.ones((n, 5), dtype="float32"))
+    adata.obsm["spatial"] = np.random.default_rng(0).random((n, 2)) * 100
+    adata.obs["in_tissue"] = np.array([1] * 12 + [0] * 8)
+    p = str(tmp_path / "data.h5ad")
+    adata.write_h5ad(p)
+
+    out = VisiumLoader().load(p)
+    assert out.n_obs == 12
+    assert out.uns.get("n_spots_excluded_off_tissue") == 8
+
+
 def _write_bundle(root, all_tissue_left=True, n_side=8, n_genes=20, hires=200, fullres=1000):
     import h5py
     import scipy.sparse as sp
