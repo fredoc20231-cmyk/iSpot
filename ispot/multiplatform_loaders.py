@@ -48,16 +48,27 @@ def _find_histology_image_and_scale(adata):
 
 
 def _apply_image_based_tissue_detection(adata):
-    """Detect the tissue region from histology and drop off-tissue spots.
+    """Optionally drop off-tissue spots using image-derived tissue detection.
+
+    Image-based Otsu segmentation is only a heuristic: an imperfect mask can
+    drop real tissue spots (viewer shows less than the full section) or keep
+    background spots near the border (dots outside the tissue). So by default
+    this does NOT filter — the authoritative ``in_tissue`` annotation handles
+    filtering, and the histology image is drawn in the viewer so the full
+    section is visible with spots overlaid via the scalefactor. Set
+    ``ISPOT_IMAGE_TISSUE_FILTER=1`` to opt back into hard image-based filtering.
 
     No-op (returns adata unchanged) when no histology image is available.
     """
     image, scale_factor = _find_histology_image_and_scale(adata)
     if image is None:
         return adata
-    from ispot.tissue_segmentation import (
-        detect_tissue_mask, spots_in_tissue_mask, downsample_mask_for_viewer,
-    )
+
+    filter_on = os.environ.get("ISPOT_IMAGE_TISSUE_FILTER", "").strip() in ("1", "true", "True")
+    if not filter_on:
+        return adata  # image is drawn in the viewer; do not drop spots by heuristic
+
+    from ispot.tissue_segmentation import detect_tissue_mask, spots_in_tissue_mask
     tissue_mask = detect_tissue_mask(image)
     coords = np.array(adata.obsm["spatial"])
     on_tissue = spots_in_tissue_mask(coords, tissue_mask, scale_factor)
@@ -65,8 +76,6 @@ def _apply_image_based_tissue_detection(adata):
     if n_excluded > 0:
         adata = adata[on_tissue].copy()
         adata.uns["n_spots_excluded_by_image_tissue_detection"] = n_excluded
-    adata.uns["tissue_mask_for_viewer"] = downsample_mask_for_viewer(tissue_mask)
-    adata.uns["tissue_mask_scale_factor"] = scale_factor
     return adata
 
 
