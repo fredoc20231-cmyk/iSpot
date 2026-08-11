@@ -27,7 +27,8 @@ Then open `http://localhost:8100` in your browser.
 - **Ground truth + no-GT modes**: When annotations exist, scores with ARI/NMI/F1. When they don't, uses a composite proxy score (SCS 0.35, CSS 0.25, ESS 0.20, CAS 0.20)
 - **Meta-learning**: Learns from all benchmark runs across all users to recommend methods for new datasets
 - **Plugin system**: Community-contributed methods via a registry
-- **Deliverables**: Ranking table (CSV), publication figures (PNG), interactive spatial viewer (JSON), PDF report
+- **Data QC**: FastQC-style per-dataset quality report (sequencing depth, genes/spot, low-count spots, mitochondrial/ribosomal fraction, gene detection, overrepresented genes) with PASS/WARN/FAIL modules
+- **Deliverables**: Ranking table (CSV), publication figures (PNG), interactive spatial viewer (JSON), PDF report, QC report (HTML/JSON)
 
 ## API Endpoints
 

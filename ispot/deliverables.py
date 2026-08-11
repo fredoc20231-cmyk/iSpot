@@ -565,6 +565,65 @@ def generate_viewer_data(
 # 4. Written Report (PDF)
 # ---------------------------------------------------------------------------
 
+def generate_qc_report(qc: dict, output_dir: str) -> str:
+    """Write the QC report as JSON + a self-contained FastQC-style HTML page.
+
+    Returns the path to the HTML file.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    json_path = os.path.join(output_dir, "qc_report.json")
+    with open(json_path, "w") as f:
+        json.dump(qc, f, default=_json_default)
+
+    colors = {"pass": "#75A025", "warn": "#E0A800", "fail": "#D62728"}
+    icons = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}
+
+    def esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+    basic = qc.get("basic", {})
+    summary = qc.get("summary", {})
+    overall = summary.get("overall", "warn")
+
+    basic_rows = "".join(
+        f"<tr><td>{esc(k)}</td><td>{esc(v)}</td></tr>"
+        for k, v in basic.items()
+    )
+    module_rows = ""
+    for m in qc.get("modules", []):
+        st = m.get("status", "warn")
+        module_rows += (
+            f'<tr><td><span style="color:{colors.get(st,"#888")};font-weight:700">'
+            f'{icons.get(st, st.upper())}</span></td>'
+            f"<td>{esc(m.get('name'))}</td>"
+            f"<td>{esc(m.get('message'))}</td></tr>"
+        )
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>iSpot QC Report</title>
+<style>
+ body{{font-family:-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;color:#222}}
+ h1{{font-size:20px}} h2{{font-size:15px;margin-top:24px}}
+ table{{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}}
+ td,th{{border:1px solid #e0e0e0;padding:6px 10px;text-align:left}}
+ .overall{{display:inline-block;padding:4px 12px;border-radius:6px;color:#fff;
+   background:{colors.get(overall,'#888')};font-weight:700}}
+</style></head><body>
+<h1>iSpot QC Report &mdash; <span class="overall">{icons.get(overall, overall.upper())}</span></h1>
+<p>{summary.get('pass',0)} pass &middot; {summary.get('warn',0)} warn &middot; {summary.get('fail',0)} fail
+ (of {summary.get('n_modules',0)} modules). QC metrics are advisory, computed on the raw uploaded data.</p>
+<h2>Modules</h2>
+<table><tr><th>Status</th><th>Module</th><th>Detail</th></tr>{module_rows}</table>
+<h2>Basic statistics</h2>
+<table><tr><th>Metric</th><th>Value</th></tr>{basic_rows}</table>
+</body></html>
+"""
+    html_path = os.path.join(output_dir, "qc_report.html")
+    with open(html_path, "w") as f:
+        f.write(html)
+    return html_path
+
+
 def generate_report(
     results: pd.DataFrame,
     ranking_table_path: str,
