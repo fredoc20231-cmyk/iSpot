@@ -1,0 +1,30 @@
+# Slim, always-deployable iSpot image.
+#
+# Runs the API, the interactive viewer, the QC report, and the methods that
+# work on a clean CPU image (Leiden/PCA + anything scanpy-only). Builds fast and
+# reliably because it excludes torch / tensorflow / R / Bioconductor. To enable
+# the heavy method backends, use the full Dockerfile instead.
+FROM python:3.11-slim
+
+# Minimal system deps for the scientific wheels.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-core.txt .
+RUN pip install --no-cache-dir -r requirements-core.txt
+
+COPY ispot/ ./ispot/
+COPY data/ ./data/
+
+RUN mkdir -p /app/ispot_jobs
+ENV ISPOT_JOBS_DIR=/app/ispot_jobs
+
+EXPOSE 8100
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://localhost:8100/api/health'); " || exit 1
+
+CMD ["python", "-m", "uvicorn", "ispot.api:app", "--host", "0.0.0.0", "--port", "8100", "--log-level", "info"]

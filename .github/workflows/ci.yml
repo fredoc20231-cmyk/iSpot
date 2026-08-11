@@ -40,14 +40,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install the runnable scientific stack
-        # Enough to boot the API and run the deps-light pipeline (Leiden/PCA).
-        # Excludes torch/tensorflow/R backends — those methods aren't exercised.
+      - name: Install the slim deploy profile
+        # Install EXACTLY the slim deploy profile (requirements-core.txt) so CI
+        # verifies that the deployable image can boot the API and run the
+        # pipeline/QC/viewer end to end. Excludes torch/tensorflow/R backends.
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pandas scikit-learn anndata \
-            scanpy leidenalg igraph scikit-misc h5py Pillow \
-            matplotlib reportlab fastapi httpx python-multipart pytest
+          pip install -r requirements-core.txt
+          pip install pytest httpx
 
       - name: Run integration tests
         run: pytest tests/integration -q
