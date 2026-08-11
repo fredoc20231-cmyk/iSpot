@@ -25,6 +25,7 @@
     viewerScale: 1,
     viewerOffsetX: 0,
     viewerOffsetY: 0,
+    selectedFile: null,
   };
 
   // ---------------------------------------------------------------------------
@@ -55,6 +56,17 @@
     }
     const resp = await fetch(API + '/upload', { method: 'POST', body: form });
     if (!resp.ok) throw new Error(`Upload error ${resp.status}: ${await resp.text()}`);
+    return resp.json();
+  }
+
+  async function apiQc(file, formData) {
+    const form = new FormData();
+    form.append('file', file);
+    for (const [k, v] of Object.entries(formData)) {
+      if (v) form.append(k, v);
+    }
+    const resp = await fetch(API + '/qc', { method: 'POST', body: form });
+    if (!resp.ok) throw new Error(`QC error ${resp.status}: ${await resp.text()}`);
     return resp.json();
   }
 
@@ -118,9 +130,12 @@
   }
 
   async function handleFile(file) {
+    state.selectedFile = file;
     document.getElementById('upload-filename').textContent = file.name;
     document.getElementById('upload-filesize').textContent = formatSize(file.size);
     document.getElementById('upload-info').classList.remove('hidden');
+    const qcPanel = document.getElementById('qc-panel');
+    if (qcPanel) qcPanel.classList.remove('hidden');
 
     const platform = document.getElementById('select-platform').value || null;
     const sampleId = document.getElementById('input-sample-id').value || null;
@@ -173,6 +188,62 @@
       if (chip.querySelector('input').checked) chip.classList.add('selected');
       container.appendChild(chip);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // SpatialQC (fast, run-first quality check)
+  // ---------------------------------------------------------------------------
+
+  function setupQc() {
+    const btn = document.getElementById('btn-qc');
+    if (btn) btn.addEventListener('click', runQc);
+  }
+
+  const QC_STATUS_COLOR = { pass: '#3fae49', warn: '#e0a800', fail: '#d64545' };
+
+  async function runQc() {
+    if (!state.selectedFile) {
+      showAlert('Choose a data file first.', 'error');
+      return;
+    }
+    const btn = document.getElementById('btn-qc');
+    const result = document.getElementById('qc-result');
+    const platform = document.getElementById('select-platform').value || null;
+    const sampleId = document.getElementById('input-sample-id').value || null;
+
+    btn.disabled = true;
+    const prevLabel = btn.textContent;
+    btn.textContent = 'Running SpatialQC…';
+    try {
+      const res = await apiQc(state.selectedFile, { platform, sample_id: sampleId });
+      const s = res.summary || {};
+      const overall = (s.overall || 'warn');
+      const chips = (res.report.modules || []).map(m =>
+        `<span class="qc-chip" style="border-color:${QC_STATUS_COLOR[m.status] || '#888'}">
+           <b style="color:${QC_STATUS_COLOR[m.status] || '#888'}">${m.status.toUpperCase()}</b> ${escapeHtml(m.name)}
+         </span>`).join('');
+      result.innerHTML = `
+        <div class="qc-verdict">
+          Overall: <b style="color:${QC_STATUS_COLOR[overall]}">${overall.toUpperCase()}</b>
+          &nbsp;·&nbsp; ${s.pass || 0} pass / ${s.warn || 0} warn / ${s.fail || 0} fail
+          &nbsp;·&nbsp; platform ${escapeHtml(res.platform)} (${escapeHtml(res.platform_confidence)})
+        </div>
+        <div class="qc-chips">${chips}</div>
+        <a class="btn btn-secondary" href="${res.qc_report_html}" target="_blank" rel="noopener">Open full SpatialQC report ↗</a>
+      `;
+      result.classList.remove('hidden');
+      showAlert(`SpatialQC complete: ${overall.toUpperCase()}.`, overall === 'fail' ? 'error' : 'success');
+    } catch (e) {
+      showAlert(`SpatialQC failed: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prevLabel;
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function renderPlatformSelect(platforms) {
@@ -778,6 +849,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     init();
     setupUpload();
+    setupQc();
     document.getElementById('btn-start').addEventListener('click', startBenchmark);
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => switchTab(tab.dataset.tab));

@@ -310,6 +310,34 @@ body {
 .method-chip.unavailable:hover { border-color: var(--border); }
 .method-chip.unavailable input { cursor: not-allowed; }
 
+/* SpatialQC (fast run-first quality check) panel */
+.qc-panel {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.qc-panel .muted { font-size: 12px; }
+.qc-result {
+  flex-basis: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.qc-verdict { font-size: 13px; margin-bottom: 8px; }
+.qc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.qc-chip {
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border: 1px solid #ddd;
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: #fff;
+}
+
 /* Buttons */
 .btn {
   padding: 11px 26px;

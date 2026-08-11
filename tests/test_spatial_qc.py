@@ -91,11 +91,34 @@ def test_build_spatial_qc_basic_modules_present():
                               sample_id="t1", platform_confidence="inferred")
     ids = [m["id"] for m in report["modules"]]
     for expected in ["basic_statistics", "platform_detection_confidence",
-                     "tissue_coverage", "gene_detection", "sparsity_dropout",
-                     "spatial_signal", "image_segmentation_quality"]:
+                     "library_size", "gene_detection", "sparsity_dropout",
+                     "spatial_signal", "tissue_coverage", "image_segmentation_quality"]:
         assert expected in ids
     assert report["report"] == "SpatialQC"
     assert report["summary"]["overall"] in ("pass", "warn", "fail")
+
+
+def test_every_module_has_explanation_and_status():
+    from ispot.spatial_qc_report import build_spatial_qc
+    report = build_spatial_qc(_make_adata(), platform="Visium",
+                              platform_confidence="inferred")
+    for m in report["modules"]:
+        assert m.get("explanation"), m["id"]          # FastQC-style interpretation
+        assert m["status"] in ("pass", "warn", "fail")
+
+
+def test_figures_present_for_key_modules():
+    from ispot.spatial_qc_report import build_spatial_qc
+    report = build_spatial_qc(_make_adata(), platform="Visium",
+                              platform_confidence="inferred")
+    figs = {m["id"]: m.get("figure") for m in report["modules"]}
+    # histograms carry bins; the spatial module carries a scatter map
+    assert figs["library_size"]["kind"] == "hist"
+    assert figs["gene_detection"]["hist"]["counts"]
+    assert figs["spatial_signal"]["kind"] == "scatter"
+    assert figs["tissue_coverage"]["kind"] == "bar"
+    # MT-CO1 in var_names -> a mitochondrial module with a figure
+    assert "mitochondrial_content" in figs and figs["mitochondrial_content"]["kind"] == "hist"
 
 
 def test_platform_confidence_default_fails():
@@ -154,3 +177,9 @@ def test_write_spatial_qc_deliverables(tmp_path):
     rec = json.load(open(paths["summary_json"]))
     assert rec["sample_id"] == "s1"
     assert "module_status" in rec
+    # The detailed report embeds figures and written interpretations.
+    html = open(paths["html"]).read()
+    assert "SpatialQC Report" in html
+    assert "data:image/png;base64," in html          # embedded figure(s)
+    assert "Spatial Signal Sanity Check" in html      # a module section
+    assert "class=\"expl\"" in html                   # interpretation block

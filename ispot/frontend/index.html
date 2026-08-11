@@ -91,6 +91,11 @@
         File: <span id="upload-filename" class="mono"></span> (<span id="upload-filesize" class="mono"></span>)
         &nbsp;·&nbsp; Platform: <span id="upload-platform" class="mono"></span>
       </div>
+      <div id="qc-panel" class="hidden qc-panel">
+        <button id="btn-qc" class="btn btn-secondary" type="button">Run SpatialQC first (fast quality check)</button>
+        <span class="muted">Runs load → profile → tissue detection only (no clustering) — seconds. Recommended before a full benchmark.</span>
+        <div id="qc-result" class="hidden qc-result"></div>
+      </div>
     </div>
 
     <!-- Method selection -->
