@@ -75,6 +75,26 @@ def test_spatial_qc_maps_three_panels():
     assert maps["has_mito"] is True
 
 
+def test_histology_background_none_without_image():
+    from ispot.spatial_features import histology_background
+    adata = _adata_with_spatial_gene()
+    assert histology_background(adata) is None            # no uns['spatial'] image
+
+
+def test_histology_background_encodes_image():
+    pytest.importorskip("PIL")
+    from ispot.spatial_features import histology_background
+    adata = _adata_with_spatial_gene()
+    img = (np.random.default_rng(0).random((60, 80, 3)) * 255).astype("uint8")
+    adata.uns["spatial"] = {"lib": {"images": {"hires": img},
+                                    "scalefactors": {"tissue_hires_scalef": 0.2}}}
+    bg = histology_background(adata, max_dim=40)
+    assert bg is not None
+    assert bg["data_url"].startswith("data:image/png;base64,")
+    assert bg["w"] <= 40 and bg["h"] <= 40                # downscaled to max_dim
+    assert bg["scalef"] > 0
+
+
 def test_svg_subsamples_large_data():
     # More spots than the cap -> subsampled flag set, still returns a ranking.
     adata = _adata_with_spatial_gene(n_side=40)   # 1600 spots
