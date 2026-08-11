@@ -1,0 +1,38 @@
+# iSpot CORE runtime dependencies — the slim, always-deployable profile.
+#
+# This installs everything needed to run the API, the interactive viewer, the
+# FastQC-style QC report, and the methods that work on a clean CPU image
+# (Leiden/PCA and anything needing only scanpy). It deliberately EXCLUDES the
+# heavy, fragile backends (torch, tensorflow, R/Bioconductor, torch-geometric,
+# squidpy) — install the full requirements.txt to enable those methods.
+#
+# Used by Dockerfile.slim and by the integration CI job.
+
+# Web framework
+fastapi==0.116.1
+uvicorn==0.35.0
+python-multipart==0.0.20
+
+# Core scientific stack
+numpy==2.1.0
+scipy==1.15.0
+pandas==2.2.3
+scikit-learn==1.7.1
+
+# Spatial transcriptomics (light: no squidpy)
+scanpy==1.11.4
+anndata==0.12.1
+scikit-misc==0.5.1   # scanpy highly_variable_genes(flavor="seurat_v3")
+h5py==3.12.1         # Space Ranger .h5 loading
+Pillow==11.3.0       # histology PNG loading
+
+# Graph / clustering (for Leiden/PCA)
+igraph==0.11.9
+leidenalg==0.10.2
+
+# Visualization / reports
+matplotlib==3.10.5
+reportlab==4.4.3
+
+# HTTP
+requests==2.32.3

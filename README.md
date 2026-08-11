@@ -20,6 +20,16 @@ docker run -p 8100:8100 ispot
 
 Then open `http://localhost:8100` in your browser.
 
+> **Deploying?** For beta/hosted use, prefer the **slim profile** — a fast,
+> CPU-only image that runs the API, viewer, QC report and every method that
+> works without torch/TensorFlow/R. See **[DEPLOY.md](DEPLOY.md)** for the slim
+> vs full profiles, configuration, and scaling notes.
+>
+> ```bash
+> docker build -f Dockerfile.slim -t ispot:slim .
+> docker run -p 8100:8100 ispot:slim
+> ```
+
 ## Features
 
 - **12 clustering methods**: Leiden/PCA, SpaGCN, STAGATE, GraphST, BayesSpace, HyperGCN, STMSGAL, SCOIGET, Novae, BISON, SpaRTaCo, spatialMNN

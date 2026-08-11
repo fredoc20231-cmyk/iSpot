@@ -296,6 +296,19 @@ body {
 .method-chip .badge.baseline { background: #ECE9E2; color: var(--gray); }
 .method-chip .badge.new { background: var(--yellow); color: var(--black); }
 .method-chip .badge.r { background: var(--pink); color: var(--black); }
+.method-chip .badge.unavailable { background: #F3E0E0; color: #A33; }
+
+/* Methods whose backends are not installed in this deployment (e.g. the slim
+   CPU-only image). Rendered dimmed and non-selectable; hover shows the reason. */
+.method-chip.unavailable {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    -45deg, transparent, transparent 6px,
+    rgba(0, 0, 0, 0.03) 6px, rgba(0, 0, 0, 0.03) 12px);
+}
+.method-chip.unavailable:hover { border-color: var(--border); }
+.method-chip.unavailable input { cursor: not-allowed; }
 
 /* Buttons */
 .btn {

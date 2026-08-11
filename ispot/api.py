@@ -280,12 +280,16 @@ def _sanitize_json(obj):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
+    runnable = available_methods(AVAILABLE_METHODS)
     return {
         "status": "healthy",
         "version": "1.0.0",
         "methods_available": len(AVAILABLE_METHODS),
+        "methods_runnable": len(runnable),
+        "default_methods": default_methods(),
         "meta_learning_runs": ml_db.count_runs(),
         "platforms_supported": list(LOADER_REGISTRY.keys()),
+        "qc": True,
     }
 
 
