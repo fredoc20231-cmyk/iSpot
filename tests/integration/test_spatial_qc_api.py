@@ -60,7 +60,9 @@ def test_qc_endpoint_returns_report_and_files(tmp_path, monkeypatch):
         # Deliverables are downloadable through the standard results route.
         html = client.get(body["qc_report_html"])
         assert html.status_code == 200
-        assert "QC Report" in html.text
+        assert "SpatialQC Report" in html.text
+        assert "data:image/png;base64," in html.text   # detailed report embeds figures
+        assert "Spatial Signal Sanity Check" in html.text
         summ = client.get(body["qc_summary_json"])
         assert summ.status_code == 200
         assert summ.json()["platform"] == "Visium"
