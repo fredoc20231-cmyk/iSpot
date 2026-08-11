@@ -71,6 +71,22 @@
 
       const methodsResp = await apiGet('/methods');
       state.availableMethods = methodsResp.methods;
+
+      // Ask the backend which methods can actually run in this image (the slim
+      // deploy profile excludes torch/TF/R backends) so we can disable the rest
+      // and default-check only the runnable set.
+      try {
+        const avail = await apiGet('/methods/availability');
+        state.methodAvailability = avail.availability || {};
+        state.defaultMethods = avail.default_methods || [];
+        if (typeof health !== 'undefined' && health.methods_runnable != null) {
+          document.getElementById('health-methods').textContent =
+            `${health.methods_runnable}/${health.methods_available}`;
+        }
+      } catch (e) {
+        state.methodAvailability = {};
+        state.defaultMethods = [];
+      }
       renderMethodSelection();
 
       const platformsResp = await apiGet('/platforms');
@@ -130,14 +146,28 @@
   function renderMethodSelection() {
     const container = document.getElementById('method-grid');
     container.innerHTML = '';
+    const availability = state.methodAvailability || {};
+    const defaults = (state.defaultMethods && state.defaultMethods.length)
+      ? state.defaultMethods : ['Leiden_PCA'];
     for (const m of state.availableMethods) {
+      const info = availability[m.name];
+      // Treat as runnable unless the backend explicitly reports it unavailable.
+      const runnable = !info || info.available !== false;
+      const checked = runnable && defaults.includes(m.name);
+
       const chip = document.createElement('label');
-      chip.className = 'method-chip';
+      chip.className = 'method-chip' + (runnable ? '' : ' unavailable');
+      if (!runnable) {
+        chip.title = info && info.reason
+          ? `Not runnable in this deployment: ${info.reason}`
+          : 'Not runnable in this deployment';
+      }
       chip.innerHTML = `
-        <input type="checkbox" value="${m.name}" ${m.name === 'Leiden_PCA' ? 'checked' : ''}>
+        <input type="checkbox" value="${m.name}" ${checked ? 'checked' : ''} ${runnable ? '' : 'disabled'}>
         <span>${m.display_name}</span>
         <span class="badge ${m.category}">${m.category}</span>
         ${m.is_r_based ? '<span class="badge r">R</span>' : ''}
+        ${runnable ? '' : '<span class="badge unavailable">unavailable</span>'}
       `;
       chip.addEventListener('change', () => chip.classList.toggle('selected', chip.querySelector('input').checked));
       if (chip.querySelector('input').checked) chip.classList.add('selected');
