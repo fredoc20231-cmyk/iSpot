@@ -121,6 +121,18 @@ def test_figures_present_for_key_modules():
     assert "mitochondrial_content" in figs and figs["mitochondrial_content"]["kind"] == "hist"
 
 
+def test_spatial_feature_modules_present():
+    from ispot.spatial_qc_report import build_spatial_qc
+    report = build_spatial_qc(_make_adata(), platform="Visium",
+                              platform_confidence="inferred")
+    figs = {m["id"]: m.get("figure") for m in report["modules"]}
+    # Spatial QC maps (VoyagerPy trio) and Moran's-I spatially variable genes.
+    assert figs["spatial_qc_maps"]["kind"] == "scatter_multi"
+    assert len(figs["spatial_qc_maps"]["panels"]) == 3
+    assert figs["spatially_variable_genes"]["kind"] == "svg"
+    assert figs["spatially_variable_genes"]["top_svgs"]  # ranked gene list
+
+
 def test_platform_confidence_default_fails():
     from ispot.spatial_qc_report import build_spatial_qc
     report = build_spatial_qc(_make_adata(), platform="Visium",

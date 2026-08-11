@@ -133,6 +133,20 @@ EXPLANATIONS: dict[str, str] = {
         "Whether a histology image was available and tissue segmentation succeeded. "
         "Without an image, tissue calls rely on metadata alone and the real tissue "
         "boundary cannot be verified."),
+    "spatial_qc_maps": (
+        "The three canonical QC metrics rendered in tissue space — total counts, "
+        "genes detected, and mitochondrial %. Spatial gradients invisible in a "
+        "histogram appear here: a capture-efficiency gradient across the slide, a "
+        "detached tissue region, or elevated mitochondrial signal at the tissue "
+        "margin (a classic off-tissue / edge artefact). Look for a coherent tissue "
+        "footprint with smooth variation, not sharp stripes or corner hot-spots."),
+    "spatially_variable_genes": (
+        "Genes whose expression is spatially organised, ranked by Moran's I — the "
+        "same statistic Space Ranger reports in spatial_enrichment.csv. This is the "
+        "core spatial signal: a healthy tissue has many genes with strong positive "
+        "Moran's I (anatomical structure). If even the top genes are near zero, "
+        "there is no recoverable spatial structure and domain clustering cannot "
+        "succeed. The maps show the top spatially variable genes in tissue space."),
 }
 
 
@@ -389,6 +403,38 @@ def build_spatial_qc(
              "thresholds": {"warn": SPATIAL_SIGNAL_WARN, "fail": SPATIAL_SIGNAL_FAIL}},
             figure=scatter)
 
+    # 7b. Spatial QC maps — the three QC metrics in tissue space (VoyagerPy trio)
+    try:
+        from ispot import spatial_features as _sf
+        qc_maps = _sf.spatial_qc_maps(adata)
+    except Exception:
+        qc_maps = None
+    if qc_maps is not None:
+        note = (" (subsampled to %d spots)" % qc_maps["n_spots_used"]) if qc_maps["subsampled"] else ""
+        add({"id": "spatial_qc_maps", "name": "Spatial QC Maps",
+             "status": "pass", "value": None,
+             "message": f"Total counts, genes detected and mitochondrial % in tissue space{note}."},
+            figure={"kind": "scatter_multi", "panels": qc_maps["panels"]})
+
+    # 7c. Spatially Variable Genes — Moran's I per gene (Space Ranger analog)
+    try:
+        from ispot import spatial_features as _sf
+        svg = _sf.spatially_variable_genes(adata)
+    except Exception:
+        svg = None
+    if svg is not None and svg.get("top_svgs"):
+        svg_status = classify_lower_bound(svg["max_morans_i"],
+                                          SPATIAL_SIGNAL_WARN, SPATIAL_SIGNAL_FAIL)
+        n_strong = int(round(svg["strong_svg_fraction"] * svg["n_genes_tested"]))
+        add({"id": "spatially_variable_genes", "name": "Spatially Variable Genes",
+             "status": svg_status, "value": round(svg["max_morans_i"], 4),
+             "message": (f"Top gene Moran's I = {svg['max_morans_i']:.3f}; "
+                         f"{n_strong}/{svg['n_genes_tested']} tested genes are strongly "
+                         f"spatial (I >= 0.25)."),
+             "thresholds": {"warn": SPATIAL_SIGNAL_WARN, "fail": SPATIAL_SIGNAL_FAIL}},
+            figure={"kind": "svg", "top_svgs": svg["top_svgs"],
+                    "maps": svg.get("maps", [])})
+
     # 8. Tissue Coverage — retention after off-tissue filtering
     cov_status = classify_lower_bound(retention_pct, TISSUE_RETENTION_WARN, TISSUE_RETENTION_FAIL)
     cov_msg = (f"{retention_pct:.1f}% of capture spots retained as on-tissue "
@@ -632,6 +678,36 @@ def _render_figure(fig_spec: dict) -> str:
         ax.set_xlabel("spatial x"); ax.set_ylabel("spatial y")
         fig.colorbar(sc, ax=ax, shrink=0.8, label=fig_spec.get("clabel", ""))
         return f'<img alt="spatial map" src="{_fig_to_base64(fig)}">'
+
+    if kind == "scatter_multi":
+        panels = fig_spec.get("panels") or []
+        panels = [p for p in panels if p.get("x")]
+        if not panels:
+            return ""
+        fig, axes = plt.subplots(1, len(panels), figsize=(3.5 * len(panels), 3.6))
+        if len(panels) == 1:
+            axes = [axes]
+        for ax, p in zip(axes, panels):
+            xs = np.asarray(p["x"], float); ys = np.asarray(p["y"], float)
+            vals = np.asarray(p["values"], float)
+            sc = ax.scatter(xs, ys, c=vals, s=5, cmap="viridis", edgecolors="none")
+            ax.set_aspect("equal"); ax.invert_yaxis()
+            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_title(p.get("title", ""), fontsize=9)
+            fig.colorbar(sc, ax=ax, shrink=0.7, label=p.get("clabel", ""))
+        fig.tight_layout()
+        return f'<img alt="spatial maps" src="{_fig_to_base64(fig)}">'
+
+    if kind == "svg":
+        rows = fig_spec.get("top_svgs") or []
+        body = "".join(
+            f"<tr><td>{_esc(r['gene'])}</td><td>{r['morans_i']:.3f}</td>"
+            f"<td>{r['total_counts']:.0f}</td></tr>" for r in rows[:20])
+        table = ("<table class='mini'><tr><th>gene</th><th>Moran's I</th>"
+                 f"<th>total counts</th></tr>{body}</table>")
+        maps = fig_spec.get("maps") or []
+        img = _render_figure({"kind": "scatter_multi", "panels": maps}) if maps else ""
+        return img + table
 
     return ""
 
