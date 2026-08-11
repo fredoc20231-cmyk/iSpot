@@ -24,7 +24,13 @@ def test_generate_qc_report_writes_html_and_json(tmp_path):
 
     assert os.path.exists(html_path)
     assert os.path.exists(os.path.join(str(tmp_path), "qc_report.json"))
+    assert os.path.exists(os.path.join(str(tmp_path), "qc_summary.txt"))
     html = open(html_path).read()
-    assert "QC Report" in html and "Modules" in html
+    assert "QC Report" in html
+    assert "Per-spot library size" in html          # a module section rendered
+    assert "data:image/png;base64," in html         # embedded plot(s)
     saved = json.load(open(os.path.join(str(tmp_path), "qc_report.json")))
     assert saved["summary"]["overall"] in ("pass", "warn", "fail")
+    # summary.txt has one line per module (FastQC-style)
+    lines = [l for l in open(os.path.join(str(tmp_path), "qc_summary.txt")).read().splitlines() if l]
+    assert len(lines) == saved["summary"]["n_modules"]

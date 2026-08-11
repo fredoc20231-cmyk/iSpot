@@ -46,11 +46,12 @@ def _adata(counts_per_spot, n_spots=200, n_genes=60, mito_boost=0.0, seed=0):
 
 def test_compute_qc_structure_and_healthy():
     qc = compute_qc(_adata(2000), platform="Visium")
-    assert set(qc.keys()) == {"basic", "modules", "summary"}
+    assert {"basic", "modules", "summary", "version"} <= set(qc.keys())
     assert qc["basic"]["platform"] == "Visium"
     assert qc["basic"]["n_mito_genes"] == 2
     ids = {m["id"] for m in qc["modules"]}
-    assert {"sequencing_depth", "genes_per_spot", "high_mito_spots_frac"} <= ids
+    assert {"sequencing_depth", "genes_per_spot", "high_mito_spots_frac",
+            "top_gene_frac", "spatial_counts_map", "spatial_autocorr"} <= ids
     depth = next(m for m in qc["modules"] if m["id"] == "sequencing_depth")
     assert depth["status"] == "pass"  # 2000 counts/spot is healthy
 
