@@ -37,7 +37,9 @@ Then open `http://localhost:8100` in your browser.
 - **Ground truth + no-GT modes**: When annotations exist, scores with ARI/NMI/F1. When they don't, uses a composite proxy score (SCS 0.35, CSS 0.25, ESS 0.20, CAS 0.20)
 - **Meta-learning**: Learns from all benchmark runs across all users to recommend methods for new datasets
 - **Plugin system**: Community-contributed methods via a registry
-- **Data QC**: FastQC-style per-dataset quality report (sequencing depth, genes/spot, low-count spots, mitochondrial/ribosomal fraction, gene detection, overrepresented genes) with PASS/WARN/FAIL modules
+- **SpatialQC** — the FastQC parallel for spatial omics: a *fast, run-first* QC mode (`POST /api/qc`) that runs only load → profile → tissue detection (no clustering) and returns a platform-aware PASS/WARN/FAIL report in seconds — Basic Statistics, Platform Detection Confidence, Tissue Coverage, Gene Detection Distribution, Sparsity/Dropout, Spatial Signal Sanity (Moran's I), Image/Segmentation Quality — as a self-contained HTML report plus a MultiQC-aggregatable `qc_summary.json`. Answer "is this dataset worth clustering?" before committing to the heavy benchmark.
+- **Multi-sample QC (MultiQC-style)**: `ispot.multi_sample_qc` aggregates many `qc_summary.json` records into one batch report that flags outlier samples (e.g. one slide with unusually low tissue retention among a consistent run)
+- **Data QC (deep)**: benchmark-time FastQC-style report (sequencing depth, genes/spot, low-count spots, mitochondrial/ribosomal fraction, gene detection, overrepresented genes) with PASS/WARN/FAIL modules
 - **Deliverables**: Ranking table (CSV), publication figures (PNG), interactive spatial viewer (JSON), PDF report, QC report (HTML/JSON)
 
 ## API Endpoints
@@ -49,6 +51,7 @@ Then open `http://localhost:8100` in your browser.
 | GET | `/api/methods/availability` | Which methods can actually run here (+ why not) |
 | GET | `/api/platforms` | List supported platforms |
 | POST | `/api/upload` | Upload ST data (.h5ad, .h5, .csv) |
+| POST | `/api/qc` | **SpatialQC** — fast run-first QC report (no clustering) |
 | POST | `/api/benchmark` | Start benchmark job |
 | GET | `/api/jobs/{id}` | Get job status |
 | GET | `/api/jobs/{id}/results` | Get job results |
@@ -58,7 +61,7 @@ Then open `http://localhost:8100` in your browser.
 | GET | `/api/plugins` | List registered methods/plugins |
 | POST | `/api/plugins/register` | Register a plugin (gated; see notes) |
 
-Mutating endpoints (`/api/upload`, `/api/benchmark`, `/api/plugins/register`) require the `X-API-Key` header when `ISPOT_API_KEY` is set.
+Mutating endpoints (`/api/upload`, `/api/qc`, `/api/benchmark`, `/api/plugins/register`) require the `X-API-Key` header when `ISPOT_API_KEY` is set.
 
 ## Project Structure
 

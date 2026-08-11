@@ -43,7 +43,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ispot.multiplatform_loaders import load_data, auto_detect_platform, LOADER_REGISTRY
+from ispot.multiplatform_loaders import (
+    load_data, auto_detect_platform, detect_platform_with_confidence, LOADER_REGISTRY,
+)
 from ispot.profiling import profile_data, DataFeatureVector
 from ispot.preprocessing import preprocess
 from ispot.cluster_estimation import estimate_n_clusters
@@ -62,6 +64,7 @@ from ispot.deliverables import (
     generate_viewer_data, generate_report, generate_qc_report,
 )
 from ispot.qc import compute_qc
+from ispot.spatial_qc_report import build_spatial_qc, write_spatial_qc, summary_record
 from ispot.plugins import (
     discover_plugins, get_all_method_names, list_plugins, get_plugin,
     validate_plugin, _load_plugin_file, _PLUGIN_REGISTRY,
@@ -290,6 +293,7 @@ async def health_check():
         "meta_learning_runs": ml_db.count_runs(),
         "platforms_supported": list(LOADER_REGISTRY.keys()),
         "qc": True,
+        "spatial_qc": True,
     }
 
 
@@ -390,6 +394,80 @@ async def upload_data(
         "filename": file.filename,
         "file_size": file_size,
         "message": "Upload successful. Use POST /api/benchmark to start analysis.",
+    }
+
+
+@app.post("/api/qc")
+async def run_spatial_qc(
+    file: UploadFile = File(...),
+    platform: str | None = Form(None),
+    sample_id: str | None = Form(None),
+    _auth: bool = Depends(require_api_key),
+):
+    """SpatialQC — the fast, run-first QC report (FastQC parallel).
+
+    Uploads data and runs ONLY load → profile → tissue detection: no
+    preprocessing, HVG, PCA, or clustering. Returns a PASS/WARN/FAIL report in
+    seconds and writes a self-contained HTML report plus a MultiQC-aggregatable
+    ``qc_summary.json``. Use this before committing to the heavy
+    ``/api/benchmark`` pipeline.
+    """
+    try:
+        validation.validate_extension(file.filename)
+    except validation.ValidationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    job_id = str(uuid.uuid4())[:12]
+    job_dir = get_job_dir(job_id)
+    job_dir.mkdir(exist_ok=True)
+
+    file_path = job_dir / file.filename
+    try:
+        file_size = validation.stream_to_file(file.file, str(file_path))
+    except validation.ValidationError as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    # Determine platform and how confident we are (drives the QC confidence module).
+    detected, confidence = detect_platform_with_confidence(str(file_path), explicit=platform)
+    platform = detected
+
+    try:
+        adata = load_data(str(file_path), platform=platform, sample_id=sample_id)
+        report = build_spatial_qc(
+            adata, platform=platform, sample_id=sample_id or job_id,
+            platform_confidence=confidence,
+        )
+        results_dir = job_dir / "results"
+        results_dir.mkdir(exist_ok=True)
+        paths = write_spatial_qc(report, output_dir=str(results_dir), sample_id=sample_id or job_id)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"QC failed: {e}")
+
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "qc_complete",
+        "progress": 1.0,
+        "message": "SpatialQC complete",
+        "created_at": datetime.now().isoformat(),
+        "file_path": str(file_path),
+        "platform": platform,
+        "sample_id": sample_id,
+        "qc": report,
+    }
+    save_job(job_id)
+
+    return {
+        "job_id": job_id,
+        "platform": platform,
+        "platform_confidence": confidence,
+        "filename": file.filename,
+        "file_size": file_size,
+        "summary": report["summary"],
+        "report": report,
+        "qc_summary": summary_record(report),
+        "qc_report_html": f"/api/jobs/{job_id}/download/qc_report.html",
+        "qc_summary_json": f"/api/jobs/{job_id}/download/qc_summary.json",
     }
 
 
