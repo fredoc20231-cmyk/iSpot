@@ -700,6 +700,63 @@ def load_data(
     return loader.load(path, sample_id=sample_id, ground_truth_col=ground_truth_col, **kwargs)
 
 
+def detect_platform_with_confidence(
+    path: str, explicit: str | None = None
+) -> tuple[str, str]:
+    """Detect the platform and report how confident that detection is.
+
+    Returns ``(platform, confidence)`` where confidence is one of:
+
+    - ``"explicit"``  the caller supplied the platform; no guessing.
+    - ``"inferred"``  a positive structural signal identified the platform
+                      (an embedded ``uns['platform']``, a Xenium/CosMx-specific
+                      file or column, a 10x feature-barcode ``.h5``).
+    - ``"default"``   nothing matched; a best-guess fallback was used. This is
+                      the case SpatialQC flags as a hard failure, because a
+                      wrong platform silently mis-thresholds everything
+                      downstream.
+
+    This backs the "Platform Detection Confidence" QC module. ``auto_detect_platform``
+    delegates here and drops the confidence for backwards compatibility.
+    """
+    if explicit:
+        return explicit, "explicit"
+
+    if path.endswith(".h5ad"):
+        try:
+            adata = ad.read_h5ad(path, backed="r")
+            if "platform" in adata.uns:
+                platform = str(adata.uns["platform"])
+                adata.file.close()
+                return platform, "inferred"
+            adata.file.close()
+        except Exception:
+            pass
+        # A bare .h5ad carries no platform signal — Visium is only a guess.
+        return "Visium", "default"
+
+    if path.endswith(".h5"):
+        # 10x feature-barcode HDF5 is a Visium/10x-specific container.
+        return "Visium", "inferred"
+
+    if path.endswith(".csv"):
+        try:
+            df = pd.read_csv(path, nrows=2)
+            if "x_local_px" in df.columns:
+                return "CosMx", "inferred"
+        except Exception:
+            pass
+        return "MERFISH", "default"  # generic CSV — best guess only
+
+    if os.path.isdir(path):
+        if os.path.exists(os.path.join(path, "cell_feature_matrix.h5")):
+            return "Xenium", "inferred"
+        if any(f.endswith(".h5") for f in os.listdir(path)):
+            return "Visium", "inferred"
+
+    return "Visium", "default"  # fallback
+
+
 def auto_detect_platform(path: str) -> str:
     """Auto-detect the spatial transcriptomics platform from file structure.
 
@@ -710,35 +767,4 @@ def auto_detect_platform(path: str) -> str:
     - .h5ad with "platform" in .uns → use that
     - .h5ad → default to Visium (most common)
     """
-    if path.endswith(".h5ad"):
-        try:
-            adata = ad.read_h5ad(path, backed="r")
-            if "platform" in adata.uns:
-                platform = str(adata.uns["platform"])
-                adata.file.close()
-                return platform
-            adata.file.close()
-        except Exception:
-            pass
-        return "Visium"  # default for .h5ad
-
-    if path.endswith(".h5"):
-        return "Visium"
-
-    if path.endswith(".csv"):
-        # Peek at columns
-        try:
-            df = pd.read_csv(path, nrows=2)
-            if "x_local_px" in df.columns:
-                return "CosMx"
-        except Exception:
-            pass
-        return "MERFISH"  # default for CSV
-
-    if os.path.isdir(path):
-        if os.path.exists(os.path.join(path, "cell_feature_matrix.h5")):
-            return "Xenium"
-        if any(f.endswith(".h5") for f in os.listdir(path)):
-            return "Visium"
-
-    return "Visium"  # fallback
+    return detect_platform_with_confidence(path)[0]
