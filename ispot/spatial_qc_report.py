@@ -141,12 +141,14 @@ EXPLANATIONS: dict[str, str] = {
         "margin (a classic off-tissue / edge artefact). Look for a coherent tissue "
         "footprint with smooth variation, not sharp stripes or corner hot-spots."),
     "spatially_variable_genes": (
-        "Genes whose expression is spatially organised, ranked by Moran's I — the "
-        "same statistic Space Ranger reports in spatial_enrichment.csv. This is the "
-        "core spatial signal: a healthy tissue has many genes with strong positive "
-        "Moran's I (anatomical structure). If even the top genes are near zero, "
-        "there is no recoverable spatial structure and domain clustering cannot "
-        "succeed. The maps show the top spatially variable genes in tissue space."),
+        "Genes whose expression is spatially organised, ranked by Moran's I and "
+        "Geary's C — the two global spatial-autocorrelation statistics computed by "
+        "spatialGE's SThet and reported by Space Ranger in spatial_enrichment.csv. "
+        "Moran's I near 1 and Geary's C well below 1 both mean strong spatial "
+        "structure. This is the core spatial signal: a healthy tissue has many "
+        "strongly spatial genes; if even the top genes are flat (I near 0, C near "
+        "1) there is no recoverable structure and domain clustering cannot succeed. "
+        "The maps show the top spatially variable genes in tissue space."),
 }
 
 
@@ -707,9 +709,10 @@ def _render_figure(fig_spec: dict) -> str:
         rows = fig_spec.get("top_svgs") or []
         body = "".join(
             f"<tr><td>{_esc(r['gene'])}</td><td>{r['morans_i']:.3f}</td>"
+            f"<td>{r.get('gearys_c', float('nan')):.3f}</td>"
             f"<td>{r['total_counts']:.0f}</td></tr>" for r in rows[:20])
         table = ("<table class='mini'><tr><th>gene</th><th>Moran's I</th>"
-                 f"<th>total counts</th></tr>{body}</table>")
+                 f"<th>Geary's C</th><th>total counts</th></tr>{body}</table>")
         maps = fig_spec.get("maps") or []
         img = _render_figure({"kind": "scatter_multi", "panels": maps,
                               "background": fig_spec.get("background")}) if maps else ""

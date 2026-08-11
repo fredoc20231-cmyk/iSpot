@@ -94,8 +94,14 @@
       <div id="qc-panel" class="hidden qc-panel">
         <button id="btn-qc" class="btn btn-secondary" type="button">Run SpatialQC first (fast quality check)</button>
         <span class="muted">Runs load → profile → tissue detection only (no clustering) — seconds. Recommended before a full benchmark.</span>
-        <div id="qc-result" class="hidden qc-result"></div>
       </div>
+      <div id="demo-panel" class="qc-panel">
+        <span class="muted">No data handy?</span>
+        <select id="select-demo"></select>
+        <button id="btn-demo" class="btn btn-secondary" type="button">Try a demo</button>
+        <span class="muted">Runs SpatialQC on a bundled synthetic Visium sample.</span>
+      </div>
+      <div id="qc-result" class="hidden qc-result"></div>
     </div>
 
     <!-- Method selection -->

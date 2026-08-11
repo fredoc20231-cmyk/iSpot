@@ -197,9 +197,54 @@
   function setupQc() {
     const btn = document.getElementById('btn-qc');
     if (btn) btn.addEventListener('click', runQc);
+    const demoBtn = document.getElementById('btn-demo');
+    if (demoBtn) demoBtn.addEventListener('click', runDemo);
+    populateDemos();
   }
 
   const QC_STATUS_COLOR = { pass: '#3fae49', warn: '#e0a800', fail: '#d64545' };
+
+  async function populateDemos() {
+    const sel = document.getElementById('select-demo');
+    if (!sel) return;
+    try {
+      const resp = await apiGet('/qc/demos');
+      sel.innerHTML = '';
+      for (const d of (resp.demos || [])) {
+        const opt = document.createElement('option');
+        opt.value = d.name;
+        opt.textContent = d.name;
+        opt.title = d.description || '';
+        sel.appendChild(opt);
+      }
+    } catch (e) {
+      const panel = document.getElementById('demo-panel');
+      if (panel) panel.classList.add('hidden');   // demos unavailable — hide the control
+    }
+  }
+
+  function renderQcResult(res) {
+    const result = document.getElementById('qc-result');
+    const s = res.summary || {};
+    const overall = (s.overall || 'warn');
+    const chips = (res.report.modules || []).map(m =>
+      `<span class="qc-chip" style="border-color:${QC_STATUS_COLOR[m.status] || '#888'}">
+         <b style="color:${QC_STATUS_COLOR[m.status] || '#888'}">${m.status.toUpperCase()}</b> ${escapeHtml(m.name)}
+       </span>`).join('');
+    const label = res.demo ? `demo: ${escapeHtml(res.demo)}`
+                           : `platform ${escapeHtml(res.platform)} (${escapeHtml(res.platform_confidence)})`;
+    result.innerHTML = `
+      <div class="qc-verdict">
+        Overall: <b style="color:${QC_STATUS_COLOR[overall]}">${overall.toUpperCase()}</b>
+        &nbsp;·&nbsp; ${s.pass || 0} pass / ${s.warn || 0} warn / ${s.fail || 0} fail
+        &nbsp;·&nbsp; ${label}
+      </div>
+      <div class="qc-chips">${chips}</div>
+      <a class="btn btn-secondary" href="${res.qc_report_html}" target="_blank" rel="noopener">Open full SpatialQC report ↗</a>
+    `;
+    result.classList.remove('hidden');
+    showAlert(`SpatialQC complete: ${overall.toUpperCase()}.`, overall === 'fail' ? 'error' : 'success');
+  }
 
   async function runQc() {
     if (!state.selectedFile) {
@@ -207,7 +252,6 @@
       return;
     }
     const btn = document.getElementById('btn-qc');
-    const result = document.getElementById('qc-result');
     const platform = document.getElementById('select-platform').value || null;
     const sampleId = document.getElementById('input-sample-id').value || null;
 
@@ -216,25 +260,29 @@
     btn.textContent = 'Running SpatialQC…';
     try {
       const res = await apiQc(state.selectedFile, { platform, sample_id: sampleId });
-      const s = res.summary || {};
-      const overall = (s.overall || 'warn');
-      const chips = (res.report.modules || []).map(m =>
-        `<span class="qc-chip" style="border-color:${QC_STATUS_COLOR[m.status] || '#888'}">
-           <b style="color:${QC_STATUS_COLOR[m.status] || '#888'}">${m.status.toUpperCase()}</b> ${escapeHtml(m.name)}
-         </span>`).join('');
-      result.innerHTML = `
-        <div class="qc-verdict">
-          Overall: <b style="color:${QC_STATUS_COLOR[overall]}">${overall.toUpperCase()}</b>
-          &nbsp;·&nbsp; ${s.pass || 0} pass / ${s.warn || 0} warn / ${s.fail || 0} fail
-          &nbsp;·&nbsp; platform ${escapeHtml(res.platform)} (${escapeHtml(res.platform_confidence)})
-        </div>
-        <div class="qc-chips">${chips}</div>
-        <a class="btn btn-secondary" href="${res.qc_report_html}" target="_blank" rel="noopener">Open full SpatialQC report ↗</a>
-      `;
-      result.classList.remove('hidden');
-      showAlert(`SpatialQC complete: ${overall.toUpperCase()}.`, overall === 'fail' ? 'error' : 'success');
+      renderQcResult(res);
     } catch (e) {
       showAlert(`SpatialQC failed: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prevLabel;
+    }
+  }
+
+  async function runDemo() {
+    const btn = document.getElementById('btn-demo');
+    const name = document.getElementById('select-demo').value || '';
+    btn.disabled = true;
+    const prevLabel = btn.textContent;
+    btn.textContent = 'Running demo…';
+    try {
+      const form = new FormData();
+      if (name) form.append('name', name);
+      const resp = await fetch(API + '/qc/demo', { method: 'POST', body: form });
+      if (!resp.ok) throw new Error(`Demo error ${resp.status}: ${await resp.text()}`);
+      renderQcResult(await resp.json());
+    } catch (e) {
+      showAlert(`Demo failed: ${e.message}`, 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = prevLabel;

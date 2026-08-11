@@ -109,6 +109,33 @@ def histology_background(adata, max_dim: int = 900) -> Optional[dict]:
         return None
 
 
+def gearys_c_batch(M, W):
+    """Geary's C for every column of ``M`` (n x g) under weights ``W`` (n x n).
+
+    Complements Moran's I (spatialGE's ``SThet`` reports both). With
+    row-normalised weights the total weight W0 = n, so
+
+        C_g = ((n-1) / (2n)) * sum_i [x_i^2 - 2 x_i (Wx)_i + (W x^2)_i]
+                              / sum_i (x_i - xbar)^2
+
+    C ≈ 1 means no spatial autocorrelation; C < 1 means positive spatial
+    structure (nearby spots similar); C > 1 means negative autocorrelation.
+    """
+    import numpy as np
+    M = np.asarray(M, dtype=float)
+    n = M.shape[0]
+    Wx = W @ M
+    Wx2 = W @ (M * M)
+    term = (M * M) - 2.0 * M * Wx + Wx2
+    num = term.sum(axis=0)
+    dev = M - M.mean(axis=0, keepdims=True)
+    denom = np.einsum("ng,ng->g", dev, dev)
+    factor = (n - 1) / (2.0 * n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(denom > 0, factor * num / denom, 1.0)
+    return out
+
+
 def _subsample(n, max_spots):
     import numpy as np
     if n <= max_spots:
@@ -165,10 +192,11 @@ def spatially_variable_genes(
 
     W = _knn_weights(coords, k)
     I = morans_i_batch(M, W)
+    C = gearys_c_batch(M, W)   # Geary's C — spatialGE SThet's second statistic
 
     names = [str(adata.var_names[i]) for i in order]
     ranking = sorted(
-        ({"gene": names[j], "morans_i": float(I[j]),
+        ({"gene": names[j], "morans_i": float(I[j]), "gearys_c": float(C[j]),
           "total_counts": float(gene_totals[order[j]])} for j in range(len(order))),
         key=lambda r: r["morans_i"], reverse=True,
     )

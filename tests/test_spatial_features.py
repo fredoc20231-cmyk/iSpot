@@ -6,7 +6,8 @@ pytest.importorskip("scipy")
 ad = pytest.importorskip("anndata")
 
 from ispot.spatial_features import (  # noqa: E402
-    _knn_weights, morans_i_batch, spatially_variable_genes, spatial_qc_maps,
+    _knn_weights, morans_i_batch, gearys_c_batch, spatially_variable_genes,
+    spatial_qc_maps,
 )
 
 
@@ -35,6 +36,27 @@ def test_morans_i_gradient_vs_noise():
     assert I[0] > 0.8            # gradient -> strong positive autocorrelation
     assert abs(I[1]) < 1e-9      # constant -> 0 (degenerate variance guard)
     assert abs(I[2]) < 0.2       # noise -> near zero
+
+
+def test_gearys_c_gradient_vs_noise():
+    coords = _grid(20)
+    n = coords.shape[0]
+    W = _knn_weights(coords, k=6)
+    gradient = coords[:, 0].astype(float)
+    rng = np.random.default_rng(0)
+    noise = rng.random(n)
+    C = gearys_c_batch(np.column_stack([gradient, noise]), W)
+    assert C[0] < 0.3          # strong spatial structure -> Geary's C well below 1
+    assert abs(C[1] - 1.0) < 0.3   # noise -> Geary's C near 1
+
+
+def test_svg_reports_both_statistics():
+    adata = _adata_with_spatial_gene()
+    svg = spatially_variable_genes(adata, max_genes=40, top=3)
+    top = svg["top_svgs"][0]
+    assert "morans_i" in top and "gearys_c" in top
+    # The engineered spatial gene: high Moran's I AND low Geary's C.
+    assert top["morans_i"] > 0.8 and top["gearys_c"] < 0.5
 
 
 def _adata_with_spatial_gene(n_side=20, n_genes=40, seed=0):

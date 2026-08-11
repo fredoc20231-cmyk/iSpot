@@ -68,6 +68,61 @@ def test_qc_endpoint_returns_report_and_files(tmp_path, monkeypatch):
         assert summ.json()["platform"] == "Visium"
 
 
+def test_qc_demo_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("ISPOT_JOBS_DIR", str(tmp_path / "demojobs"))
+    import importlib
+    import ispot.api as api
+    importlib.reload(api)
+
+    with TestClient(api.app) as client:
+        # List demos
+        r = client.get("/api/qc/demos")
+        assert r.status_code == 200
+        names = [d["name"] for d in r.json()["demos"]]
+        assert "visium_healthy_demo" in names
+
+        # Run the healthy demo (no upload)
+        r2 = client.post("/api/qc/demo", data={"name": "visium_healthy_demo"})
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["demo"] == "visium_healthy_demo"
+        ids = [m["id"] for m in body["report"]["modules"]]
+        assert "spatially_variable_genes" in ids and "spatial_qc_maps" in ids
+
+        # The report is downloadable and embeds the histology-overlaid figures.
+        html = client.get(body["qc_report_html"])
+        assert html.status_code == 200
+        assert "data:image/png;base64," in html.text
+        # Geary's C column is present in the SVG table.
+        assert "Geary" in html.text
+
+
+def test_qc_real_visium_demo(tmp_path, monkeypatch):
+    """The bundled real 10x Visium breast demo loads and runs through /api/qc/demo."""
+    pytest.importorskip("h5py")
+    import os
+    from ispot.demo_data import REAL_DEMOS
+    if not os.path.isdir(REAL_DEMOS["visium_breast_092a"]["path"]):
+        pytest.skip("real demo bundle not present in checkout")
+
+    monkeypatch.setenv("ISPOT_JOBS_DIR", str(tmp_path / "realdemo"))
+    import importlib
+    import ispot.api as api
+    importlib.reload(api)
+
+    with TestClient(api.app) as client:
+        r = client.post("/api/qc/demo", data={"name": "visium_breast_092a"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["demo"] == "visium_breast_092a"
+        assert body["report"]["basic"]["n_spots"] > 500          # real in-tissue spots
+        ids = [m["id"] for m in body["report"]["modules"]]
+        assert "spatially_variable_genes" in ids
+        html = client.get(body["qc_report_html"])
+        assert html.status_code == 200
+        assert "data:image/png;base64," in html.text
+
+
 def test_qc_endpoint_rejects_bad_extension(tmp_path, monkeypatch):
     monkeypatch.setenv("ISPOT_JOBS_DIR", str(tmp_path / "jobs2"))
     import importlib

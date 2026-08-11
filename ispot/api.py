@@ -471,6 +471,72 @@ async def run_spatial_qc(
     }
 
 
+@app.get("/api/qc/demos")
+async def list_qc_demos():
+    """List the bundled synthetic demo datasets that SpatialQC can run."""
+    from ispot import demo_data
+    return {"demos": demo_data.list_demos()}
+
+
+@app.post("/api/qc/demo")
+async def run_qc_demo(
+    name: str | None = Form(None),
+    _auth: bool = Depends(require_api_key),
+):
+    """Run SpatialQC on a bundled synthetic demo dataset (no upload needed).
+
+    Lets a first-time user see the full report — tissue-space QC maps,
+    Moran's I / Geary's C spatially variable genes, histology overlay — instantly.
+    """
+    from ispot import demo_data
+
+    available = demo_data.list_demos()
+    demo_name = name or (available[0]["name"] if available else "visium_healthy_demo")
+    try:
+        adata = demo_data.make_demo(demo_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Unknown demo '{demo_name}': {e}")
+
+    job_id = str(uuid.uuid4())[:12]
+    job_dir = get_job_dir(job_id)
+    job_dir.mkdir(exist_ok=True)
+    results_dir = job_dir / "results"
+    results_dir.mkdir(exist_ok=True)
+
+    try:
+        report = build_spatial_qc(
+            adata, platform="Visium", sample_id=demo_name,
+            platform_confidence="explicit",
+        )
+        write_spatial_qc(report, output_dir=str(results_dir), sample_id=demo_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Demo QC failed: {e}")
+
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "qc_complete",
+        "progress": 1.0,
+        "message": f"SpatialQC demo complete: {demo_name}",
+        "created_at": datetime.now().isoformat(),
+        "platform": "Visium",
+        "sample_id": demo_name,
+        "qc": report,
+    }
+    save_job(job_id)
+
+    return {
+        "job_id": job_id,
+        "demo": demo_name,
+        "platform": "Visium",
+        "platform_confidence": "explicit",
+        "summary": report["summary"],
+        "report": report,
+        "qc_summary": summary_record(report),
+        "qc_report_html": f"/api/jobs/{job_id}/download/qc_report.html",
+        "qc_summary_json": f"/api/jobs/{job_id}/download/qc_summary.json",
+    }
+
+
 @app.post("/api/benchmark")
 async def start_benchmark(
     request: BenchmarkRequest,
