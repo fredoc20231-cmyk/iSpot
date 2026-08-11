@@ -59,8 +59,9 @@ from ispot.meta_learning import (
 )
 from ispot.deliverables import (
     generate_ranking_table, generate_figures,
-    generate_viewer_data, generate_report,
+    generate_viewer_data, generate_report, generate_qc_report,
 )
+from ispot.qc import compute_qc
 from ispot.plugins import (
     discover_plugins, get_all_method_names, list_plugins, get_plugin,
     validate_plugin, _load_plugin_file, _PLUGIN_REGISTRY,
@@ -458,6 +459,8 @@ async def get_job_results(job_id: str):
         "meta_learning": job.get("meta_learning", {}),
         "status": job["status"],
         "method_summary": job.get("method_summary", {}),
+        "qc": job.get("qc", {}),
+        "qc_report": f"/api/jobs/{job_id}/download/qc_report.html",
     })
 
 
@@ -610,6 +613,12 @@ def run_benchmark_task(
 
         features = profile_data(adata, platform=platform)
         job["data_profile"] = features.to_dict()
+
+        # QC report (FastQC-style) computed on the raw uploaded data.
+        try:
+            job["qc"] = compute_qc(adata, platform=platform)
+        except Exception as e:  # pragma: no cover - QC must never block the run
+            job["qc"] = {"error": str(e)}
 
         # Resource guard: reject datasets larger than the configured cap before
         # dispatching any compute-heavy method.
@@ -875,6 +884,13 @@ def run_benchmark_task(
             output_path=str(results_dir / "benchmark_report.pdf"),
             statistical_results=statistical_results,
         )
+
+        # QC report (JSON + FastQC-style HTML)
+        if job.get("qc") and "error" not in job["qc"]:
+            try:
+                generate_qc_report(job["qc"], output_dir=str(results_dir))
+            except Exception as e:  # pragma: no cover - defensive
+                print(f"QC report generation failed: {e}")
 
         # --- Step 10: Complete ---
         job["status"] = summary["status"]  # "completed" or "completed_partial"

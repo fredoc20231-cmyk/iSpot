@@ -565,6 +565,160 @@ def generate_viewer_data(
 # 4. Written Report (PDF)
 # ---------------------------------------------------------------------------
 
+_QC_COLORS = {"pass": "#75A025", "warn": "#E0A800", "fail": "#D62728"}
+_QC_ICON = {"pass": "&#10003;", "warn": "!", "fail": "&#10007;"}  # tick / bang / cross
+
+
+def _qc_esc(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _fig_to_base64(fig) -> str:
+    import base64
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=90, bbox_inches="tight")
+    plt.close(fig)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _qc_render_plot(plot: dict) -> str:
+    """Render a module's plot dict to an <img> (or HTML table) string."""
+    kind = plot.get("kind")
+    if kind == "hist":
+        edges = plot.get("bin_edges") or []
+        counts = plot.get("counts") or []
+        if len(edges) < 2 or not counts:
+            return ""
+        edges = np.asarray(edges, float)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        widths = np.diff(edges)
+        fig, ax = plt.subplots(figsize=(4.2, 2.4))
+        ax.bar(centers, counts, width=widths, align="center", color="#0279EE", edgecolor="none")
+        ax.set_xlabel(plot.get("xlabel", ""))
+        ax.set_ylabel("spots" if "spot" in plot.get("xlabel", "") else "count")
+        ax.spines[["top", "right"]].set_visible(False)
+        return f'<img alt="histogram" src="{_fig_to_base64(fig)}">'
+    if kind == "heatmap":
+        grid = plot.get("grid") or []
+        arr = np.array([[np.nan if v is None else v for v in row] for row in grid], dtype=float)
+        if arr.size == 0:
+            return ""
+        fig, ax = plt.subplots(figsize=(3.6, 3.4))
+        im = ax.imshow(arr, origin="lower", cmap="viridis", interpolation="nearest")
+        ax.set_xticks([]); ax.set_yticks([])
+        fig.colorbar(im, ax=ax, shrink=0.8, label="mean counts")
+        return f'<img alt="spatial heatmap" src="{_fig_to_base64(fig)}">'
+    if kind == "table" and "top_genes" in plot:
+        rows = "".join(
+            f"<tr><td>{_qc_esc(g['gene'])}</td><td>{g['total']:.0f}</td>"
+            f"<td>{g['pct']*100:.2f}%</td></tr>"
+            for g in plot["top_genes"]
+        )
+        return ("<table class='mini'><tr><th>gene</th><th>total counts</th>"
+                f"<th>% of counts</th></tr>{rows}</table>")
+    if kind == "table" and "rows" in plot:
+        rows = "".join(
+            f"<tr><td>{_qc_esc(k)}</td><td>{_qc_esc(v)}</td></tr>"
+            for k, v in plot["rows"].items()
+        )
+        return f"<table class='mini'><tr><th>metric</th><th>value</th></tr>{rows}</table>"
+    return ""
+
+
+def generate_qc_report(qc: dict, output_dir: str) -> str:
+    """Write the QC report as JSON + summary.txt + a FastQC-style HTML page.
+
+    The HTML mirrors FastQC: a left summary panel of PASS/WARN/FAIL modules and
+    a main column of per-module sections, each with its plot and interpretation.
+    Returns the path to the HTML file.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "qc_report.json"), "w") as f:
+        json.dump(qc, f, default=_json_default)
+
+    modules = qc.get("modules", [])
+    summary = qc.get("summary", {})
+    overall = summary.get("overall", "warn")
+    basic = qc.get("basic", {})
+
+    # FastQC-style summary.txt (status<TAB>module)
+    with open(os.path.join(output_dir, "qc_summary.txt"), "w") as f:
+        for m in modules:
+            f.write(f"{m['status'].upper()}\t{m['name']}\n")
+
+    # Left summary nav + right module sections.
+    nav = "".join(
+        f'<a href="#{m["id"]}" class="nav-item">'
+        f'<span class="dot" style="background:{_QC_COLORS.get(m["status"], "#888")}">'
+        f'{_QC_ICON.get(m["status"], "?")}</span>{_qc_esc(m["name"])}</a>'
+        for m in modules
+    )
+
+    sections = ""
+    for m in modules:
+        st = m.get("status", "warn")
+        body = _qc_render_plot(m["plot"]) if m.get("plot") else ""
+        thr = ""
+        if "thresholds" in m and m.get("value") is not None:
+            thr = (f'<span class="thr">value={m["value"]:.4g} '
+                   f'(warn {m["thresholds"]["warn"]}, fail {m["thresholds"]["fail"]})</span>')
+        sections += (
+            f'<section id="{m["id"]}" class="module">'
+            f'<h3><span class="badge" style="background:{_QC_COLORS.get(st, "#888")}">'
+            f'{_QC_ICON.get(st, "?")} {st.upper()}</span> {_qc_esc(m["name"])}</h3>'
+            f'<p class="msg">{_qc_esc(m.get("message", ""))} {thr}</p>'
+            f'<div class="plot">{body}</div></section>'
+        )
+
+    version = qc.get("version", "")
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>iSpot QC Report</title>
+<style>
+ :root{{--pass:#75A025;--warn:#E0A800;--fail:#D62728}}
+ body{{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,sans-serif;color:#1a1a1a}}
+ header{{background:#111;color:#fff;padding:16px 24px}}
+ header h1{{margin:0;font-size:18px}} header .sub{{opacity:.8;font-size:12px;margin-top:4px}}
+ .overall{{display:inline-block;padding:3px 10px;border-radius:5px;font-weight:700;margin-left:8px;
+   background:{_QC_COLORS.get(overall,'#888')}}}
+ .layout{{display:flex;align-items:flex-start}}
+ nav{{width:280px;flex:0 0 280px;border-right:1px solid #eee;padding:12px 0;position:sticky;top:0}}
+ .nav-item{{display:flex;align-items:center;gap:8px;padding:6px 16px;font-size:13px;color:#222;text-decoration:none}}
+ .nav-item:hover{{background:#f5f5f5}}
+ .dot{{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
+   color:#fff;font-size:11px;font-weight:700}}
+ main{{flex:1;padding:12px 24px;max-width:760px}}
+ .module{{border-bottom:1px solid #eee;padding:14px 0}}
+ .module h3{{font-size:15px;margin:0 0 6px;display:flex;align-items:center;gap:8px}}
+ .badge{{color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}}
+ .msg{{font-size:13px;color:#444;margin:0 0 8px}} .thr{{color:#888;margin-left:6px}}
+ table.mini{{border-collapse:collapse;font-size:12px}}
+ table.mini td,table.mini th{{border:1px solid #e6e6e6;padding:4px 8px;text-align:left}}
+ img{{max-width:100%;height:auto}}
+</style></head><body>
+<header>
+  <h1>iSpot QC Report <span class="overall">{overall.upper()}</span></h1>
+  <div class="sub">Spatial-omics quality control &middot; {_qc_esc(basic.get('platform') or 'unknown platform')}
+   &middot; {basic.get('n_spots','?')} spots &times; {basic.get('n_genes','?')} genes
+   &middot; {summary.get('pass',0)} pass / {summary.get('warn',0)} warn / {summary.get('fail',0)} fail
+   &middot; iSpot {_qc_esc(version)}</div>
+</header>
+<div class="layout">
+  <nav>{nav}</nav>
+  <main>
+    <p style="font-size:12px;color:#666">QC metrics are advisory, computed on the raw uploaded data
+     before preprocessing. Thresholds are heuristic defaults for spatial transcriptomics.</p>
+    {sections}
+  </main>
+</div>
+</body></html>
+"""
+    html_path = os.path.join(output_dir, "qc_report.html")
+    with open(html_path, "w") as f:
+        f.write(html)
+    return html_path
+
+
 def generate_report(
     results: pd.DataFrame,
     ranking_table_path: str,

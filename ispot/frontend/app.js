@@ -300,12 +300,33 @@
       `</div>`;
   }
 
+  function renderQC(qc) {
+    const container = document.getElementById('results-warnings');
+    if (!container || !qc || !qc.summary) return;
+    const colors = { pass: '#75A025', warn: '#E0A800', fail: '#D62728' };
+    const s = qc.summary;
+    const chips = (qc.modules || []).map(m =>
+      `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border-radius:10px;` +
+      `font-size:11px;color:#fff;background:${colors[m.status] || '#888'}" title="${escapeHtml(m.message || '')}">` +
+      `${escapeHtml(m.name)}: ${String(m.status).toUpperCase()}</span>`
+    ).join('');
+    const cls = s.overall === 'fail' ? 'error' : (s.overall === 'warn' ? 'warning' : 'success');
+    const div = document.createElement('div');
+    div.className = 'alert alert-' + cls;
+    div.innerHTML =
+      `<strong>Data QC: ${String(s.overall).toUpperCase()}</strong> — ` +
+      `${s.pass} pass &middot; ${s.warn} warn &middot; ${s.fail} fail` +
+      `<div style="margin-top:6px">${chips}</div>`;
+    container.appendChild(div);
+  }
+
   function renderResults(results) {
     document.getElementById('results-has-gt').textContent = results.has_ground_truth ? 'Yes' : 'No';
     document.getElementById('results-n-clusters').textContent = results.n_clusters;
     document.getElementById('results-job-id').textContent = results.job_id;
 
     renderMethodSummary(results.method_summary);
+    renderQC(results.qc);
 
     // Download links
     const linksDiv = document.getElementById('download-links');
@@ -315,6 +336,9 @@
       { label: 'Viewer Data (JSON)', url: results.viewer_data },
       { label: 'PDF Report', url: results.report },
     ];
+    if (results.qc && results.qc.summary) {
+      links.push({ label: 'QC Report (HTML)', url: results.qc_report });
+    }
     for (const l of links) {
       const a = document.createElement('a');
       a.href = API.replace('/api', '') + l.url;
