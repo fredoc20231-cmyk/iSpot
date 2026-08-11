@@ -1,0 +1,65 @@
+name: Docker (slim image builds + boots)
+
+# Deploy-readiness gate: proves the deployable artifact itself works — the slim
+# image builds from scratch, the container starts, and /api/health answers
+# "healthy". This is heavier than the pip-install integration job in ci.yml, so
+# it only runs when the image definition changes, on main, or on demand.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "Dockerfile.slim"
+      - "requirements-core.txt"
+      - "ispot/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "Dockerfile.slim"
+      - "requirements-core.txt"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+jobs:
+  slim-image:
+    name: Build + boot the slim image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build slim image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slim
+          tags: ispot:slim
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot the container and probe /api/health
+        run: |
+          set -euo pipefail
+          docker run -d --name ispot -p 8100:8100 ispot:slim
+          # Wait up to ~60s for the API to answer healthy.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8100/api/health -o health.json; then
+              echo "Health endpoint responded:"
+              cat health.json
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "API did not become healthy in time. Container logs:"
+              docker logs ispot
+              exit 1
+            fi
+            sleep 2
+          done
+          # Assert the payload reports healthy + QC readiness.
+          python3 -c "import json; h=json.load(open('health.json')); assert h.get('status')=='healthy', h; assert h.get('qc') is True, h; assert h.get('methods_runnable',0) >= 1, h; print('OK:', h['status'], 'runnable=', h['methods_runnable'], '/', h['methods_available'])"
+
+      - name: Container logs (always)
+        if: always()
+        run: docker logs ispot || true
