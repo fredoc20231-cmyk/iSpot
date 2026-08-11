@@ -59,6 +59,56 @@ def morans_i_batch(M, W):
     return out
 
 
+def histology_background(adata, max_dim: int = 900) -> Optional[dict]:
+    """Return the histology image as a base64 PNG plus the scale factor that
+    maps full-res spot pixel coordinates onto it, so spatial maps can overlay
+    spots on the tissue image (like a VoyagerPy/Space Ranger plot).
+
+    Returns ``None`` when no image is available or PIL is missing. Never raises.
+    """
+    try:
+        import base64
+        import io
+        import numpy as np
+        from PIL import Image as PILImage
+
+        spatial = adata.uns.get("spatial") if hasattr(adata, "uns") else None
+        if not spatial:
+            return None
+        lib = next(iter(spatial.values()))
+        images = lib.get("images", {}) or {}
+        sf = lib.get("scalefactors", {}) or {}
+        # Prefer hires; fall back to lowres. Use the matching scale factor.
+        if "hires" in images:
+            img = np.asarray(images["hires"])
+            scalef = float(sf.get("tissue_hires_scalef", 1.0))
+        elif "lowres" in images:
+            img = np.asarray(images["lowres"])
+            scalef = float(sf.get("tissue_lowres_scalef", 1.0))
+        else:
+            return None
+        if img.ndim == 2:
+            img = np.stack([img] * 3, axis=-1)
+        if img.dtype != np.uint8:
+            img = (255 * (img / (img.max() or 1.0))).astype(np.uint8)
+
+        pil = PILImage.fromarray(img[:, :, :3])
+        h, w = img.shape[0], img.shape[1]
+        # Downscale further to keep the embedded PNG small.
+        longest = max(h, w)
+        extra = (max_dim / longest) if longest > max_dim else 1.0
+        if extra < 1.0:
+            pil = pil.resize((max(1, int(w * extra)), max(1, int(h * extra))))
+            w, h = pil.size
+            scalef *= extra
+        buf = io.BytesIO()
+        pil.save(buf, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        return {"data_url": data_url, "w": int(w), "h": int(h), "scalef": float(scalef)}
+    except Exception:
+        return None
+
+
 def _subsample(n, max_spots):
     import numpy as np
     if n <= max_spots:

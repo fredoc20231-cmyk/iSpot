@@ -308,6 +308,17 @@ def build_spatial_qc(
             "clabel": "total counts",
         }
 
+    # Histology underlay (base64 PNG + scale factor) so spatial maps overlay the
+    # spots on the tissue image and read as tissue-specific, like a Space Ranger
+    # / VoyagerPy plot. None when there is no image; never raises.
+    try:
+        from ispot import spatial_features as _sf0
+        histology_bg = _sf0.histology_background(adata)
+    except Exception:
+        histology_bg = None
+    if scatter is not None and histology_bg is not None:
+        scatter["background"] = histology_bg
+
     modules: list[dict] = []
 
     def add(module: dict, figure=None):
@@ -414,7 +425,8 @@ def build_spatial_qc(
         add({"id": "spatial_qc_maps", "name": "Spatial QC Maps",
              "status": "pass", "value": None,
              "message": f"Total counts, genes detected and mitochondrial % in tissue space{note}."},
-            figure={"kind": "scatter_multi", "panels": qc_maps["panels"]})
+            figure={"kind": "scatter_multi", "panels": qc_maps["panels"],
+                    "background": histology_bg})
 
     # 7c. Spatially Variable Genes — Moran's I per gene (Space Ranger analog)
     try:
@@ -433,7 +445,7 @@ def build_spatial_qc(
                          f"spatial (I >= 0.25)."),
              "thresholds": {"warn": SPATIAL_SIGNAL_WARN, "fail": SPATIAL_SIGNAL_FAIL}},
             figure={"kind": "svg", "top_svgs": svg["top_svgs"],
-                    "maps": svg.get("maps", [])})
+                    "maps": svg.get("maps", []), "background": histology_bg})
 
     # 8. Tissue Coverage — retention after off-tissue filtering
     cov_status = classify_lower_bound(retention_pct, TISSUE_RETENTION_WARN, TISSUE_RETENTION_FAIL)
@@ -670,13 +682,9 @@ def _render_figure(fig_spec: dict) -> str:
         vals = np.asarray(fig_spec.get("values") or [], float)
         if xs.size == 0:
             return ""
-        fig, ax = plt.subplots(figsize=(4.2, 3.9))
-        sc = ax.scatter(xs, ys, c=vals, s=6, cmap="viridis", edgecolors="none")
-        ax.set_aspect("equal")
-        ax.invert_yaxis()  # image/tissue convention: y grows downward
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.set_xlabel("spatial x"); ax.set_ylabel("spatial y")
-        fig.colorbar(sc, ax=ax, shrink=0.8, label=fig_spec.get("clabel", ""))
+        fig, ax = plt.subplots(figsize=(4.4, 4.1))
+        _draw_spatial_panel(ax, xs, ys, vals, fig_spec.get("clabel", ""),
+                            fig_spec.get("background"), fig)
         return f'<img alt="spatial map" src="{_fig_to_base64(fig)}">'
 
     if kind == "scatter_multi":
@@ -684,17 +692,14 @@ def _render_figure(fig_spec: dict) -> str:
         panels = [p for p in panels if p.get("x")]
         if not panels:
             return ""
-        fig, axes = plt.subplots(1, len(panels), figsize=(3.5 * len(panels), 3.6))
+        bg = fig_spec.get("background")
+        fig, axes = plt.subplots(1, len(panels), figsize=(3.7 * len(panels), 3.8))
         if len(panels) == 1:
             axes = [axes]
         for ax, p in zip(axes, panels):
-            xs = np.asarray(p["x"], float); ys = np.asarray(p["y"], float)
-            vals = np.asarray(p["values"], float)
-            sc = ax.scatter(xs, ys, c=vals, s=5, cmap="viridis", edgecolors="none")
-            ax.set_aspect("equal"); ax.invert_yaxis()
-            ax.set_xticks([]); ax.set_yticks([])
-            ax.set_title(p.get("title", ""), fontsize=9)
-            fig.colorbar(sc, ax=ax, shrink=0.7, label=p.get("clabel", ""))
+            _draw_spatial_panel(ax, np.asarray(p["x"], float), np.asarray(p["y"], float),
+                                np.asarray(p["values"], float), p.get("clabel", ""), bg, fig,
+                                title=p.get("title", ""))
         fig.tight_layout()
         return f'<img alt="spatial maps" src="{_fig_to_base64(fig)}">'
 
@@ -706,10 +711,47 @@ def _render_figure(fig_spec: dict) -> str:
         table = ("<table class='mini'><tr><th>gene</th><th>Moran's I</th>"
                  f"<th>total counts</th></tr>{body}</table>")
         maps = fig_spec.get("maps") or []
-        img = _render_figure({"kind": "scatter_multi", "panels": maps}) if maps else ""
+        img = _render_figure({"kind": "scatter_multi", "panels": maps,
+                              "background": fig_spec.get("background")}) if maps else ""
         return img + table
 
     return ""
+
+
+def _draw_spatial_panel(ax, xs, ys, vals, clabel, background, fig, title=""):
+    """Draw one spatial map: histology underlay (if given) + translucent spots,
+    cropped to the tissue footprint — matches a Space Ranger / VoyagerPy plot."""
+    import numpy as np
+
+    drawn_bg = False
+    if background:
+        try:
+            import base64
+            import io
+            from PIL import Image as PILImage
+            raw = background["data_url"].split(",", 1)[1]
+            im = np.asarray(PILImage.open(io.BytesIO(base64.b64decode(raw))))
+            w, h, scalef = background["w"], background["h"], background["scalef"]
+            ax.imshow(im, extent=[0, w, h, 0])          # image pixel space, y down
+            px, py = xs * scalef, ys * scalef           # full-res -> image pixels
+            sc = ax.scatter(px, py, c=vals, s=9, cmap="viridis",
+                            alpha=0.75, edgecolors="none")
+            # Crop to the spot bounding box (the tissue), with a small margin.
+            mx = 0.04 * (px.max() - px.min() + 1)
+            my = 0.04 * (py.max() - py.min() + 1)
+            ax.set_xlim(px.min() - mx, px.max() + mx)
+            ax.set_ylim(py.max() + my, py.min() - my)   # y inverted (image rows)
+            drawn_bg = True
+        except Exception:
+            drawn_bg = False
+    if not drawn_bg:
+        sc = ax.scatter(xs, ys, c=vals, s=8, cmap="viridis", edgecolors="none")
+        ax.invert_yaxis()                                # tissue convention: y down
+    ax.set_aspect("equal")
+    ax.set_xticks([]); ax.set_yticks([])
+    if title:
+        ax.set_title(title, fontsize=9)
+    fig.colorbar(sc, ax=ax, shrink=0.75, label=clabel)
 
 
 def render_spatial_qc_html(report: dict, output_dir: str,
