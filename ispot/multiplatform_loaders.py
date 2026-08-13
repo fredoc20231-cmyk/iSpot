@@ -173,6 +173,42 @@ class BaseLoader:
         except Exception as e:
             adata.uns["tissue_image_detection_error"] = str(e)
 
+        # Density-based tissue detection for platforms with NEITHER a histology
+        # image NOR real in_tissue metadata (Slide-seq, Stereo-seq, DBiT-seq —
+        # in_tissue is Visium/10x-specific). Otherwise every raw bead/spot on
+        # the device is treated as "on tissue," so the viewer shows the device's
+        # raw geometry (a round puck, a rectangular chip) rather than the real,
+        # smaller tissue footprint. On by default for these platforms (they have
+        # no other tissue reference); override with ISPOT_DENSITY_TISSUE_FILTER=0.
+        has_image = (
+            "spatial" in adata.uns
+            and any(isinstance(v, dict) and v.get("images")
+                    for v in adata.uns["spatial"].values())
+        )
+        no_real_tissue_metadata = self.platform_name in (
+            "Slide-seqV2", "Stereo-seq", "DBiT-seq")
+        filter_on = os.environ.get("ISPOT_DENSITY_TISSUE_FILTER", "1").strip() \
+            not in ("0", "false", "False")
+        if no_real_tissue_metadata and not has_image and filter_on:
+            try:
+                from ispot.tissue_segmentation import detect_tissue_by_expression_density
+                coords_for_density = np.array(adata.obsm["spatial"])
+                X = adata.X
+                total_counts = (
+                    np.asarray(X.sum(axis=1)).ravel() if hasattr(X, "sum")
+                    else np.asarray(X).sum(axis=1)
+                )
+                on_tissue = detect_tissue_by_expression_density(
+                    coords_for_density, total_counts)
+                n_excluded = int((~on_tissue).sum())
+                if n_excluded > 0 and on_tissue.sum() > 0:
+                    n_before = adata.shape[0]
+                    adata = adata[on_tissue].copy()
+                    adata.uns["n_spots_excluded_by_density_tissue_detection"] = n_excluded
+                    adata.uns["n_spots_before_density_tissue_filter"] = int(n_before)
+            except Exception as e:
+                adata.uns["tissue_density_detection_error"] = str(e)
+
         # Set platform metadata
         adata.uns["platform"] = self.platform_name
 

@@ -84,6 +84,81 @@ def spots_in_tissue_mask(spatial_coords: np.ndarray, tissue_mask: np.ndarray, sc
     return tissue_mask[rows, cols]
 
 
+def detect_tissue_by_expression_density(
+    coords: np.ndarray,
+    total_counts: np.ndarray,
+    grid_bins: int = 100,
+    min_component_fraction: float = 0.02,
+) -> np.ndarray:
+    """Detect real tissue coverage from expression density alone, for
+    platforms with no histology image and no in_tissue metadata (Slide-seq,
+    Stereo-seq, DBiT-seq). Without this, every raw bead/spot on the device
+    is treated as "on tissue," so the viewer shows the device's raw
+    geometry (a round Slide-seq puck, a rectangular Stereo-seq/DBiT-seq
+    chip) instead of the actual, usually smaller and irregular, tissue
+    footprint placed on it.
+
+    Real tissue-covered spots have substantially higher total UMI/count
+    density than background/ambient spots picking up only stray RNA — a
+    standard heuristic in the Slide-seq/HDST literature. This bins spots onto
+    a coarse 2D grid, applies the same Otsu thresholding used for image-based
+    detection (reused here on count density instead of pixel intensity), and
+    keeps only the largest spatially-contiguous high-density region — so
+    isolated high-count outlier spots don't get treated as separate "tissue
+    islands," and the result is a real, contiguous tissue shape.
+
+    Fails open: on too-few spots or no discriminating signal it returns all
+    True (keep everything), so it can never wipe out a dataset.
+
+    Returns
+    -------
+    np.ndarray: boolean array, shape (n_spots,). True = on real tissue.
+    """
+    from scipy import ndimage
+
+    coords = np.asarray(coords, dtype=float)
+    total_counts = np.asarray(total_counts, dtype=float).ravel()
+    n = len(coords)
+    if n < 20:
+        return np.ones(n, dtype=bool)  # too few spots to estimate density
+
+    x_min, y_min = coords[:, 0].min(), coords[:, 1].min()
+    x_max, y_max = coords[:, 0].max(), coords[:, 1].max()
+    x_range = max(x_max - x_min, 1e-9)
+    y_range = max(y_max - y_min, 1e-9)
+
+    x_bins = np.clip(((coords[:, 0] - x_min) / x_range * (grid_bins - 1)).astype(int), 0, grid_bins - 1)
+    y_bins = np.clip(((coords[:, 1] - y_min) / y_range * (grid_bins - 1)).astype(int), 0, grid_bins - 1)
+
+    # Mean log1p-count density per occupied grid cell (occupancy-normalized so
+    # one very high-count spot doesn't beat a cell full of moderate spots).
+    density_grid = np.zeros((grid_bins, grid_bins))
+    occupancy_grid = np.zeros((grid_bins, grid_bins))
+    np.add.at(density_grid, (y_bins, x_bins), np.log1p(total_counts))
+    np.add.at(occupancy_grid, (y_bins, x_bins), 1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean_density_grid = np.where(occupancy_grid > 0, density_grid / np.maximum(occupancy_grid, 1), 0.0)
+
+    finite_vals = mean_density_grid[occupancy_grid > 0]
+    if len(finite_vals) == 0 or finite_vals.max() == finite_vals.min():
+        return np.ones(n, dtype=bool)  # no discriminating signal — don't filter
+    normalized = (mean_density_grid - finite_vals.min()) / (finite_vals.max() - finite_vals.min())
+
+    thresh = _otsu_threshold(normalized)
+    high_density_mask = (normalized >= thresh) & (occupancy_grid > 0)
+
+    # Keep only the largest spatially-contiguous high-density region(s).
+    labeled, n_components = ndimage.label(high_density_mask)
+    if n_components == 0:
+        return np.ones(n, dtype=bool)
+    sizes = ndimage.sum(high_density_mask, labeled, range(1, n_components + 1))
+    largest_size = sizes.max()
+    keep_labels = [i + 1 for i, s in enumerate(sizes) if s >= min_component_fraction * largest_size]
+    final_grid_mask = np.isin(labeled, keep_labels)
+
+    return final_grid_mask[y_bins, x_bins]
+
+
 def downsample_mask_for_viewer(mask: np.ndarray, max_dim: int = 150) -> dict:
     from scipy import ndimage
     h, w = mask.shape
