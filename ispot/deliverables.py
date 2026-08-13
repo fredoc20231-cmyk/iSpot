@@ -468,6 +468,7 @@ def generate_viewer_data(
     method_labels: dict[str, np.ndarray],
     has_ground_truth: bool,
     output_dir: str,
+    label_index=None,
 ) -> str:
     """Generate JSON data for the interactive web viewer.
 
@@ -537,21 +538,38 @@ def generate_viewer_data(
             spot["ground_truth"] = str(adata.obs["ground_truth"].iloc[i])
         viewer_data["spots"].append(spot)
 
-    # Method labels. A method whose label count doesn't match the viewer's spot
-    # count is a real upstream misalignment (e.g. preprocessing dropped spots
-    # that the label array still counts). Fail loudly with a traceable error
-    # rather than silently truncating/padding, which would garble the rendered
-    # shape. This must be fixed upstream, not hidden here.
+    # Method labels — align to spots by BARCODE, not by position.
+    #
+    # The labels are computed on the adata the methods ran on; the viewer is
+    # built from a separately-preprocessed adata (HVG/PCA). If that preprocessing
+    # dropped or reordered spots, positional alignment applies each label to the
+    # WRONG spot — the domains then render as a random-looking scatter instead of
+    # contiguous tissue regions. When ``label_index`` (the obs_names the labels
+    # correspond to) is given, we map barcode -> label and emit labels in the
+    # viewer adata's own obs_names order, so every spot gets ITS OWN label. Spots
+    # absent from the label source are marked "unassigned" rather than mis-coloured.
+    # (This mirrors the reference benchmark, which reindexes per-barcode CSVs.)
     n_spots = adata.shape[0]
+    target_names = [str(b) for b in adata.obs_names]
+    src_names = [str(b) for b in label_index] if label_index is not None else None
+
     for method, labels in method_labels.items():
-        if len(labels) != n_spots:
-            raise ValueError(
-                f"Method '{method}' produced {len(labels)} labels but the "
-                f"viewer's adata has {n_spots} spots — spot-count mismatch "
-                f"between preprocessing and label generation must be fixed "
-                f"upstream, not silently truncated/padded here."
-            )
-        viewer_data["methods"][method] = [str(l) for l in labels]
+        labels = [str(l) for l in np.asarray(labels).ravel()]
+        if src_names is not None and len(src_names) == len(labels):
+            lookup = dict(zip(src_names, labels))
+            viewer_data["methods"][method] = [lookup.get(b, "unassigned") for b in target_names]
+        else:
+            # No barcode index (or a length that doesn't match it): fall back to
+            # positional alignment, and a spot-count mismatch is a loud, traceable
+            # error rather than a silently garbled shape.
+            if len(labels) != n_spots:
+                raise ValueError(
+                    f"Method '{method}' produced {len(labels)} labels but the "
+                    f"viewer's adata has {n_spots} spots — spot-count mismatch "
+                    f"between preprocessing and label generation must be fixed "
+                    f"upstream, not silently truncated/padded here."
+                )
+            viewer_data["methods"][method] = labels
 
     # Save as JSON (may be large; consider chunking for very large datasets)
     json_path = os.path.join(output_dir, "viewer_data.json")

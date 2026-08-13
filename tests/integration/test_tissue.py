@@ -212,6 +212,56 @@ def test_viewer_data_embeds_histology(tmp_path):
     assert h["scalef"] == 0.5 and h["spot_diameter_fullres"] == 20
 
 
+def test_viewer_labels_align_by_barcode_not_position(tmp_path):
+    # The label-source adata and the viewer adata can be preprocessed separately,
+    # so their spot ORDER (and subset) may differ. Labels must follow the spot
+    # (by obs_names), never the position — otherwise domains render as a random
+    # scatter. This reproduces a reorder + subset and asserts each spot keeps its
+    # own label.
+    pytest.importorskip("matplotlib")
+    from ispot.deliverables import generate_viewer_data
+
+    n = 12
+    src_barcodes = [f"b{i}" for i in range(n)]
+    # label of barcode b{i} is simply str(i) -- so a correct alignment is trivial
+    # to check regardless of ordering.
+    labels = np.array([str(i) for i in range(n)])
+
+    # Viewer adata: reversed order AND dropping two spots (b0, b11).
+    keep = list(reversed(src_barcodes))[1:-1]   # b10, b9, ..., b1
+    adata = ad.AnnData(np.ones((len(keep), 4), dtype="float32"))
+    adata.obs_names = keep
+    adata.obsm["spatial"] = np.random.default_rng(0).random((len(keep), 2))
+
+    path = generate_viewer_data(
+        adata, {"m": labels}, has_ground_truth=False,
+        output_dir=str(tmp_path), label_index=src_barcodes,
+    )
+    data = json.load(open(path))
+    aligned = data["methods"]["m"]
+    # Each viewer spot must carry the label of its OWN barcode (b{k} -> "k").
+    assert aligned == [b[1:] for b in keep]
+    # And positional alignment would have been wrong (sanity: orders differ).
+    assert aligned != [str(i) for i in range(len(keep))]
+
+
+def test_viewer_labels_unassigned_for_missing_barcode(tmp_path):
+    # A viewer spot with no label in the source is marked "unassigned", not
+    # mis-coloured with a neighbour's label.
+    pytest.importorskip("matplotlib")
+    from ispot.deliverables import generate_viewer_data
+
+    adata = ad.AnnData(np.ones((3, 4), dtype="float32"))
+    adata.obs_names = ["b0", "b1", "ghost"]
+    adata.obsm["spatial"] = np.random.default_rng(0).random((3, 2))
+    path = generate_viewer_data(
+        adata, {"m": np.array(["0", "1"])}, has_ground_truth=False,
+        output_dir=str(tmp_path), label_index=["b0", "b1"],
+    )
+    data = json.load(open(path))
+    assert data["methods"]["m"] == ["0", "1", "unassigned"]
+
+
 def test_viewer_data_raises_on_spot_count_mismatch(tmp_path):
     # Task 4 / checklist #5: a length mismatch is a loud, traceable error.
     pytest.importorskip("matplotlib")
