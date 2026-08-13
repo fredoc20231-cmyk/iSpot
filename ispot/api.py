@@ -1016,11 +1016,16 @@ def run_benchmark_task(
             output_dir=str(results_dir),
         )
 
-        # Viewer data — use preprocessed adata for HVG expression
+        # Viewer data — use preprocessed adata for HVG expression, but align the
+        # method labels to spots BY BARCODE (obs_names of the adata the methods
+        # actually ran on). adata_for_est is a separate preprocessing, so a
+        # positional join here would colour spots with other spots' labels and
+        # render the domains as a random scatter.
         viewer_path = generate_viewer_data(
             adata_for_est, method_labels,
             has_ground_truth=has_gt,
             output_dir=str(results_dir),
+            label_index=list(adata.obs_names),
         )
 
         # PDF report
