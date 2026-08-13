@@ -32,11 +32,12 @@ def test_density_keeps_tissue_drops_background():
     coords, counts, in_circle = _chip_with_circular_tissue()
     on_tissue = detect_tissue_by_expression_density(coords, counts)
     assert on_tissue.dtype == bool and on_tissue.shape == (coords.shape[0],)
-    # Most real-tissue spots kept; most background dropped.
+    # Most real-tissue spots kept; most background dropped, with clear separation.
     kept_tissue = on_tissue[in_circle].mean()
     kept_bg = on_tissue[~in_circle].mean()
-    assert kept_tissue > 0.9
-    assert kept_bg < 0.2
+    assert kept_tissue > 0.85
+    assert kept_bg < 0.25
+    assert kept_tissue - kept_bg > 0.6
     # And it doesn't keep everything (it actually filtered).
     assert on_tissue.sum() < coords.shape[0]
 

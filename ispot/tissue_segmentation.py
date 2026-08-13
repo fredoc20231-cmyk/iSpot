@@ -122,6 +122,11 @@ def detect_tissue_by_expression_density(
     if n < 20:
         return np.ones(n, dtype=bool)  # too few spots to estimate density
 
+    # Don't let the grid be much finer than the data supports, or occupied
+    # cells become isolated (one spot each) and the connected-component step
+    # can't find a contiguous tissue region.
+    grid_bins = int(min(grid_bins, max(10, np.sqrt(n))))
+
     x_min, y_min = coords[:, 0].min(), coords[:, 1].min()
     x_max, y_max = coords[:, 0].max(), coords[:, 1].max()
     x_range = max(x_max - x_min, 1e-9)
@@ -139,13 +144,20 @@ def detect_tissue_by_expression_density(
     with np.errstate(invalid="ignore", divide="ignore"):
         mean_density_grid = np.where(occupancy_grid > 0, density_grid / np.maximum(occupancy_grid, 1), 0.0)
 
-    finite_vals = mean_density_grid[occupancy_grid > 0]
+    occ = occupancy_grid > 0
+    finite_vals = mean_density_grid[occ]
     if len(finite_vals) == 0 or finite_vals.max() == finite_vals.min():
         return np.ones(n, dtype=bool)  # no discriminating signal — don't filter
-    normalized = (mean_density_grid - finite_vals.min()) / (finite_vals.max() - finite_vals.min())
 
-    thresh = _otsu_threshold(normalized)
-    high_density_mask = (normalized >= thresh) & (occupancy_grid > 0)
+    # Otsu must see ONLY occupied cells. Feeding it the full grid (empty cells
+    # forced to 0) floods the histogram with background zeros and drags the
+    # threshold down, so real background beads slip through as "tissue".
+    lo, hi = float(finite_vals.min()), float(finite_vals.max())
+    occ_norm = (finite_vals - lo) / (hi - lo)
+    thresh = _otsu_threshold(occ_norm)
+    normalized = np.zeros_like(mean_density_grid)
+    normalized[occ] = occ_norm
+    high_density_mask = (normalized >= thresh) & occ
 
     # Keep only the largest spatially-contiguous high-density region(s).
     labeled, n_components = ndimage.label(high_density_mask)
