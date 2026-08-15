@@ -571,6 +571,23 @@ def generate_viewer_data(
                 )
             viewer_data["methods"][method] = labels
 
+    # Domain-map diagnostics on the aligned (coords, labels) the viewer renders,
+    # so the flag describes exactly what the user sees: whether each method's
+    # domains are coherent, salt-and-pepper, or trivially axis-banded. Best-effort.
+    try:
+        from ispot.domain_diagnostics import diagnose_domains
+
+        diagnostics = {}
+        for method, aligned in viewer_data["methods"].items():
+            diagnostics[method] = diagnose_domains(coords, aligned)
+        if has_ground_truth:
+            gt = [s.get("ground_truth", "unassigned") for s in viewer_data["spots"]]
+            if any(g != "unassigned" for g in gt):
+                diagnostics["ground_truth"] = diagnose_domains(coords, gt)
+        viewer_data["diagnostics"] = diagnostics
+    except Exception as e:  # pragma: no cover - defensive
+        viewer_data["diagnostics_error"] = str(e)
+
     # Save as JSON (may be large; consider chunking for very large datasets)
     json_path = os.path.join(output_dir, "viewer_data.json")
     with open(json_path, "w") as f:
