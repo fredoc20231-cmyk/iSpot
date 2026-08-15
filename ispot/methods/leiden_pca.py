@@ -18,7 +18,7 @@ def run(adata, n_clusters, seed=42, **kwargs):
     """
     from ispot.preprocessing import preprocess
 
-    adata = preprocess(adata)
+    adata = preprocess(adata, platform=kwargs.get("platform", "Visium"))
 
     def res_search(adata, target, low=0.01, high=2.5, max_iter=50):
         res = 1.0
