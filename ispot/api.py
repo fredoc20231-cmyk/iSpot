@@ -788,7 +788,7 @@ def run_benchmark_task(
 
         # Preprocess a copy for cluster estimation only.
         # Method runners do their own preprocessing internally.
-        adata_for_est = preprocess(adata.copy())
+        adata_for_est = preprocess(adata.copy(), platform=platform)
 
         # --- Step 4: Determine cluster count ---
         job["message"] = "Estimating cluster count..."
@@ -848,7 +848,7 @@ def run_benchmark_task(
 
                 try:
                     t0 = time.time()
-                    m = runner(adata, n_clusters, seed=seed)
+                    m = runner(adata, n_clusters, seed=seed, platform=platform)
                     runtime = m.get("runtime", time.time() - t0)
 
                     result = {

@@ -17,7 +17,7 @@ def run(adata, n_clusters, seed=42, n_epochs=500, lr=0.0001, **kwargs):
     import tensorflow.compat.v1 as tf
     tf.disable_v2_behavior()
 
-    adata = preprocess(adata)
+    adata = preprocess(adata, platform=kwargs.get("platform", "Visium"))
     STAGATE.Cal_Spatial_Net(adata, k_cutoff=15, model="KNN")
 
     t0 = time.time()

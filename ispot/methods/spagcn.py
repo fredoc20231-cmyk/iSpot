@@ -14,10 +14,12 @@ from ispot.methods._nogt_helper import safe_compute_metrics
 def run(adata, n_clusters, seed=42, p=0.5, **kwargs):
     """Run SpaGCN in expression-only mode."""
     import SpaGCN
+    from ispot.preprocessing import PLATFORM_MIN_GENES, DEFAULT_MIN_GENES
 
     adata = adata.copy()
     adata.layers["counts"] = adata.X.copy()
-    SpaGCN.prefilter_cells(adata, min_genes=200)
+    min_genes = PLATFORM_MIN_GENES.get(kwargs.get("platform", "Visium"), DEFAULT_MIN_GENES)
+    SpaGCN.prefilter_cells(adata, min_genes=min_genes)
     SpaGCN.prefilter_genes(adata, min_cells=3)
     SpaGCN.prefilter_specialgenes(adata)
     sc.pp.normalize_total(adata, target_sum=1e4)
