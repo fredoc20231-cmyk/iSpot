@@ -65,13 +65,15 @@ def test_degenerate_single_domain():
 
 
 def test_unassigned_spots_are_ignored():
-    coords = _grid(side=10)
-    labels = (coords[:, 1] * 5).astype(int).astype(str)
-    labels[: len(labels) // 2] = "unassigned"     # half unassigned
+    coords = _grid(side=20)
+    # Two big left/right regions; drop a spatial band of spots as unassigned.
+    labels = np.where(coords[:, 0] > 0.5, "1", "0").astype("<U11")
+    labels[coords[:, 1] < 0.25] = "unassigned"
     d = diagnose_domains(coords, labels)
-    # Still classified on the assigned half, not derailed to degenerate.
-    assert d["flag"] in {"axis-banded", "coherent"}
-    assert d["n_domains"] >= 2
+    # Classified on the assigned remainder (two coherent regions), NOT derailed
+    # to a single-domain "degenerate" verdict by the unassigned spots.
+    assert d["n_domains"] == 2
+    assert d["flag"] != "degenerate"
 
 
 def test_coherence_bounds():
